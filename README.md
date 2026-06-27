@@ -37,7 +37,7 @@
 
 ## Why VaultS3?
 
-**MinIO** stripped the admin console from its Community Edition in 2025 and archived the open-source project in early 2026 — full management now lives in the paid AIStor tier. **SeaweedFS** is capable but spreads across multiple components (master / volume / filer), and its web admin UI is a recent addition. **Garage** still has no object versioning, WORM/object-lock, or event notifications.
+**MinIO** stripped the admin console from its Community Edition in mid-2025 and archived the open-source repository in February 2026 — it is no longer actively maintained, and full management now requires the paid AIStor tier. **SeaweedFS** is capable but spreads across multiple components (master / volume / filer); it does have a web admin UI (`weed admin`) and a working FUSE mount. **Garage** still has no object versioning, WORM/object-lock, or event notifications.
 
 **VaultS3 keeps everything in one self-contained binary under 80 MB RAM:**
 
