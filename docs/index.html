@@ -383,59 +383,109 @@
     }
     .features-header .section-subtitle { margin: 0 auto; }
 
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 20px;
+    /* Feature categories */
+    .feature-cat { margin-top: 72px; }
+    .feature-cat:first-of-type { margin-top: 0; }
+    .cat-head { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+    .cat-head .cat-label {
+      font-size: 12px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase;
+      color: var(--text-muted); white-space: nowrap;
     }
+    .cat-head .cat-line { height: 1px; flex: 1; background: linear-gradient(90deg, var(--border), transparent); }
+    .cat-head .cat-count { font-size: 12px; color: var(--text-dim); font-family: var(--mono); white-space: nowrap; }
+
+    .cat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-auto-rows: minmax(168px, auto);
+      gap: 16px;
+    }
+
     .feature-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 16px;
-      padding: 32px;
-      transition: all 0.3s;
+      padding: 26px;
+      transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
       position: relative;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      --mx: 50%; --my: 50%;
     }
+    /* top accent line */
     .feature-card::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 1px;
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; z-index: 2;
       background: linear-gradient(90deg, transparent, var(--primary-dim), transparent);
-      opacity: 0;
-      transition: opacity 0.3s;
+      opacity: 0; transition: opacity 0.3s;
     }
+    /* cursor-follow spotlight */
+    .feature-card::after {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 1;
+      background: radial-gradient(440px circle at var(--mx) var(--my), rgba(129,140,248,0.10), transparent 42%);
+      opacity: 0; transition: opacity 0.35s;
+    }
+    .feature-card > * { position: relative; z-index: 2; }
     .feature-card:hover {
-      border-color: rgba(99, 102, 241, 0.3);
+      border-color: rgba(99, 102, 241, 0.4);
       transform: translateY(-4px);
-      box-shadow: 0 20px 40px -20px rgba(0,0,0,0.4);
+      box-shadow: 0 20px 40px -22px rgba(0,0,0,0.6), 0 0 34px -16px var(--primary-glow);
     }
     .feature-card:hover::before { opacity: 1; }
+    .feature-card:hover::after { opacity: 1; }
+
     .feature-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 20px;
-      font-size: 22px;
+      width: 46px; height: 46px; border-radius: 12px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 18px; transition: transform 0.3s ease;
     }
+    .feature-card:hover .feature-icon { transform: scale(1.08) rotate(-4deg); }
     .feature-icon.purple { background: var(--primary-glow); }
     .feature-icon.green { background: var(--green-glow); }
     .feature-icon.amber { background: rgba(245, 158, 11, 0.12); }
     .feature-card h3 {
-      font-size: 18px;
-      font-weight: 700;
-      margin-bottom: 8px;
+      font-size: 17px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.2px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
     }
-    .feature-card p {
-      font-size: 14px;
-      color: var(--text-muted);
-      line-height: 1.6;
+    .feature-card p { font-size: 14px; color: var(--text-muted); line-height: 1.6; }
+
+    /* Flagship (2x2) cards */
+    .feature-card.flagship {
+      grid-column: span 2; grid-row: span 2; padding: 34px;
+      background: radial-gradient(130% 120% at 0% 0%, rgba(99,102,241,0.12), transparent 52%), var(--bg-card);
+      border-color: rgba(99, 102, 241, 0.28);
+    }
+    .feature-card.flagship .feature-icon { width: 58px; height: 58px; margin-bottom: 22px; }
+    .feature-card.flagship h3 { font-size: 24px; letter-spacing: -0.5px; }
+    .feature-card.flagship p { font-size: 15px; max-width: 94%; }
+
+    /* chips (flagship sub-features) */
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 24px; }
+    .chip {
+      font-size: 12px; font-family: var(--mono); color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; background: var(--bg-subtle);
+    }
+
+    /* tags */
+    .tag {
+      font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--green); background: var(--green-glow);
+      border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 2px 7px;
+    }
+    .tag.bench { color: var(--primary-bright); background: var(--primary-glow); border-color: rgba(99,102,241,0.35); }
+
+    /* inline stat (e.g. listing latency) */
+    .feature-stat { margin-top: auto; padding-top: 16px; }
+    .feature-stat b { font-family: var(--mono); font-size: 20px; color: var(--primary-bright); font-weight: 600; }
+    .feature-stat span { display: block; font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+
+    @media (max-width: 980px) {
+      .cat-grid { grid-template-columns: repeat(2, 1fr); }
+      .feature-card.flagship { grid-column: span 2; grid-row: span 1; }
+    }
+    @media (max-width: 560px) {
+      .cat-grid { grid-template-columns: 1fr; }
+      .feature-card.flagship { grid-column: span 1; }
     }
 
     /* Comparison */
@@ -689,125 +739,191 @@
         Full S3 compatibility with a built-in dashboard, security hardening, and features that competitors charge enterprise pricing for.
       </p>
     </div>
-    <div class="features-grid">
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-        </div>
-        <h3>Built-in Dashboard</h3>
-        <p>React-based web UI embedded in the binary. File browser, IAM management, audit trail, search, dark mode. No separate web server.</p>
+    <!-- Category 1: Core S3 & Dashboard -->
+    <div class="feature-cat">
+      <div class="cat-head reveal">
+        <span class="cat-label">Core S3 &amp; Dashboard</span>
+        <span class="cat-line"></span>
+        <span class="cat-count">09</span>
       </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <div class="cat-grid">
+        <div class="feature-card flagship reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          </div>
+          <h3>Built-in Dashboard</h3>
+          <p>A full React UI embedded in the single binary — no separate web server, no extra container. Run the whole platform from the browser.</p>
+          <div class="chips">
+            <span class="chip">File browser</span>
+            <span class="chip">IAM &amp; policies</span>
+            <span class="chip">Audit trail</span>
+            <span class="chip">Search</span>
+            <span class="chip">Versioning &amp; diff</span>
+            <span class="chip">Dark mode</span>
+          </div>
         </div>
-        <h3>5 Rounds of Security</h3>
-        <p>60+ security fixes. AES-256-GCM encryption, SigV4 auth, path traversal protection, SSRF prevention, rate limiting, CSP headers.</p>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>5 Rounds of Security</h3>
+          <p>60+ hardening fixes: AES-256-GCM, SigV4 auth, path-traversal &amp; SSRF protection, rate limiting, CSP headers.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          </div>
+          <h3>S3 Select (SQL)</h3>
+          <p>Query CSV/JSON objects with SQL without downloading — SELECT, WHERE, LIKE, AND/OR, LIMIT, right from the S3 API.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+          </div>
+          <h3>Versioning &amp; WORM</h3>
+          <p>Per-bucket versioning with a git-like diff viewer, legal hold &amp; retention (GOVERNANCE/COMPLIANCE), one-click rollback.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <h3>FUSE Mount</h3>
+          <p>Mount any bucket as a local directory — LRU block cache, metadata caching, SigV4 auth, read/write support built in.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          </div>
+          <h3>IAM &amp; OIDC/SSO</h3>
+          <p>Users, groups &amp; S3-compatible policy evaluation, with OIDC login (Google, Keycloak, Auth0) and role mapping.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <h3>Full-text Search</h3>
+          <p>Search every bucket by key, content type, and tags — in-memory index with LRU eviction and incremental updates.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>
+          </div>
+          <h3>Event Notifications</h3>
+          <p>Webhooks, Kafka, NATS, Redis, AMQP, PostgreSQL &amp; Elasticsearch — with per-bucket prefix/suffix event filtering.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <h3>Lambda Triggers</h3>
+          <p>Invoke external functions on S3 events — webhook-based with filtering, optional response storage, worker-pool dispatch.</p>
+        </div>
       </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon amber">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-        </div>
-        <h3>S3 Select (SQL)</h3>
-        <p>Query CSV and JSON objects with SQL without downloading. SELECT, WHERE, LIKE, AND/OR, LIMIT — right from the S3 API.</p>
+    </div>
+
+    <!-- Category 2: Distributed & Durability -->
+    <div class="feature-cat">
+      <div class="cat-head reveal">
+        <span class="cat-label">Distributed &amp; Durability</span>
+        <span class="cat-line"></span>
+        <span class="cat-count">05</span>
       </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+      <div class="cat-grid">
+        <div class="feature-card flagship reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/><path d="M6 6h.01M6 18h.01"/></svg>
+          </div>
+          <h3>Erasure Coding</h3>
+          <p>Reed–Solomon encoding across multiple disks with a background healer that auto-reconstructs degraded objects. Lose disks without losing data — no RAID controller required.</p>
+          <div class="chips">
+            <span class="chip">Reed–Solomon</span>
+            <span class="chip">Configurable shards</span>
+            <span class="chip">Background healer</span>
+            <span class="chip">Survives disk loss</span>
+          </div>
         </div>
-        <h3>Object Versioning & WORM</h3>
-        <p>Per-bucket versioning with git-like diff viewer. Legal hold and retention (GOVERNANCE/COMPLIANCE). One-click rollback.</p>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><circle cx="12" cy="4" r="2"/><circle cx="5" cy="20" r="2"/><circle cx="19" cy="20" r="2"/><path d="M12 6v3M12 9l-6 9M12 9l6 9"/></svg>
+          </div>
+          <h3>Raft Clustering</h3>
+          <p>Strongly-consistent metadata via Raft consensus, with consistent-hash placement, quorum reads/writes, and failover.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+          </div>
+          <h3>Active-Active Replication</h3>
+          <p>Multi-site sync with vector-clock conflict resolution, plus one-way async push. Keep regions in step.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </div>
+          <h3>Scales to 100M Objects <span class="tag bench">Benchmarked</span></h3>
+          <p>List a prefix with millions of keys without slowdown — served from a sorted metadata index, never a full-bucket scan.</p>
+          <div class="feature-stat"><b>~0.7 ms</b><span>per page — flat from 1K to 100M objects</span></div>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0018 0V5"/><path d="M3 12a9 3 0 0018 0"/></svg>
+          </div>
+          <h3>Tiering &amp; Backup</h3>
+          <p>Transparent hot/cold tiering (local or remote S3) with promote-on-access, plus a full/incremental backup scheduler.</p>
+        </div>
       </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        </div>
-        <h3>FUSE Mount</h3>
-        <p>Mount any bucket as a local directory. LRU block cache, metadata caching, SigV4 auth. Read and write support built-in.</p>
+    </div>
+
+    <!-- Category 3: Intelligence & Ops -->
+    <div class="feature-cat">
+      <div class="cat-head reveal">
+        <span class="cat-label">Intelligence &amp; Ops</span>
+        <span class="cat-line"></span>
+        <span class="cat-count">05 · all new</span>
       </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon amber">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <div class="cat-grid">
+        <div class="feature-card flagship reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M2 12h20"/><path d="M12 2a15 15 0 014 10 15 15 0 01-4 10 15 15 0 01-4-10 15 15 0 014-10z"/></svg>
+          </div>
+          <h3>Semantic / Vector Search <span class="tag">New</span></h3>
+          <p>A built-in RAG store — no external vector database. Objects are embedded via any OpenAI-compatible model and served as cosine-similarity search, all inside the single binary.</p>
+          <div class="chips">
+            <span class="chip">Ollama</span>
+            <span class="chip">llama.cpp</span>
+            <span class="chip">OpenAI</span>
+            <span class="chip">Cosine kNN</span>
+            <span class="chip">No external DB</span>
+          </div>
         </div>
-        <h3>Lambda Triggers</h3>
-        <p>Invoke external functions on S3 events. Webhook-based with event filtering, optional response storage. Worker pool dispatch.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3>Migrate from MinIO <span class="tag">New</span></h3>
+          <p>Point the dashboard wizard at any S3 source, pick buckets, import with live progress — streamed, auto-retried, no AWS SDK.</p>
         </div>
-        <h3>IAM & OIDC/SSO</h3>
-        <p>Users, groups, and policies with S3-compatible policy evaluation. OIDC login with Google, Keycloak, Auth0. Role mapping.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div class="feature-card reveal">
+          <div class="feature-icon amber">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+          </div>
+          <h3>Auto-Update <span class="tag">New</span></h3>
+          <p>Opt-in daily release check with a dashboard banner, plus checksum-verified self-update. Your data is never touched.</p>
         </div>
-        <h3>Full-text Search</h3>
-        <p>Search across all buckets by key, content type, and tags. In-memory index with LRU eviction cap and incremental updates.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon amber">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+          </div>
+          <h3>Cost Estimator <span class="tag">New</span></h3>
+          <p>See what your data would cost on S3, GCS, R2, B2, or Wasabi — storage plus egress. Self-hosting is egress-free.</p>
         </div>
-        <h3>Event Notifications</h3>
-        <p>Webhooks, Kafka, NATS, Redis, AMQP, PostgreSQL, and Elasticsearch backends. Per-bucket event filtering with key prefix/suffix matching.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M2 12h20"/><path d="M12 2a15 15 0 014 10 15 15 0 01-4 10 15 15 0 01-4-10 15 15 0 014-10z"/></svg>
+        <div class="feature-card reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
+          </div>
+          <h3>Bucket Snapshots <span class="tag">New</span></h3>
+          <p>Git-for-buckets: commit a bucket's state, diff against live, roll back in one click — even resurrects deleted objects. lakeFS in a single binary.</p>
         </div>
-        <h3>Semantic / Vector Search <span style="font-size:.7em;color:#10b981">NEW</span></h3>
-        <p>Built-in RAG store. Embeds object text via any OpenAI-compatible model (Ollama, llama.cpp, OpenAI) and serves similarity search from the API — no external vector database, all in the single binary.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><rect x="2" y="3" width="20" height="6" rx="1"/><rect x="2" y="15" width="20" height="6" rx="1"/><path d="M6 6h.01M6 18h.01"/></svg>
-        </div>
-        <h3>Erasure Coding &amp; Clustering</h3>
-        <p>Reed-Solomon erasure coding across multiple disks with a background healer, plus Raft-based clustering (consistent-hash placement, quorum, failover) for strongly-consistent metadata.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon amber">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
-        </div>
-        <h3>Active-Active Replication</h3>
-        <p>Multi-site replication with vector-clock conflict resolution, plus one-way async push mode. Keep data in sync across regions.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0018 0V5"/><path d="M3 12a9 3 0 0018 0"/></svg>
-        </div>
-        <h3>Tiering &amp; Backup</h3>
-        <p>Transparent hot/cold tiering (local or remote S3) with promotion on access, plus a built-in full/incremental backup scheduler with history.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </div>
-        <h3>Migrate from S3 / MinIO <span style="font-size:.7em;color:#10b981">NEW</span></h3>
-        <p>Leaving MinIO? Point the dashboard wizard at any S3-compatible source, pick your buckets, and import them with live progress — streamed, with automatic retry on transient errors. No AWS SDK, no extra tools.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon amber">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
-        </div>
-        <h3>Auto-Update <span style="font-size:.7em;color:#10b981">NEW</span></h3>
-        <p>Opt-in daily release check with a dashboard banner, plus checksum-verified self-update for binary deploys (Watchtower for Docker). Stay current — your data is never touched.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon green">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-        </div>
-        <h3>Cost Estimator <span style="font-size:.7em;color:#10b981">NEW</span></h3>
-        <p>See exactly what your data would cost on AWS S3, GCS, R2, B2, or Wasabi — storage plus egress — right in the dashboard. Self-hosting is egress-free; the savings add up fast.</p>
-      </div>
-      <div class="feature-card reveal">
-        <div class="feature-icon purple">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6"/><path d="M6 15a9 9 0 009-9 3 3 0 013-3"/></svg>
-        </div>
-        <h3>Bucket Snapshots <span style="font-size:.7em;color:#10b981">NEW</span></h3>
-        <p>Git-for-buckets: commit a bucket's state, diff against live, and roll back in one click. Restore even resurrects deleted objects — and it's reversible. lakeFS in a single binary, no extra stack.</p>
       </div>
     </div>
   </div>
@@ -1048,16 +1164,32 @@
     nav.classList.toggle('scrolled', window.scrollY > 20);
   });
 
-  // Reveal on scroll
+  // Reveal on scroll — staggered cascade inside each bento grid
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
+        const d = (parseInt(entry.target.dataset.i) || 0) * 70;
+        setTimeout(() => entry.target.classList.add('visible'), d);
+        observer.unobserve(entry.target);
       }
     });
   }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
 
+  // give each card a column-based stagger index (cascade left → right)
+  document.querySelectorAll('.cat-grid').forEach(grid => {
+    [...grid.children].forEach((card, i) => { card.dataset.i = i % 4; });
+  });
+
   document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+  // Cursor-follow spotlight on feature cards
+  document.querySelectorAll('.feature-card').forEach(card => {
+    card.addEventListener('pointermove', e => {
+      const r = card.getBoundingClientRect();
+      card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+      card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+    });
+  });
 
   // Copy install command
   function copyInstall() {
