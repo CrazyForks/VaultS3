@@ -24,9 +24,10 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
   object counts. Listing now seeks straight to the continuation marker in the
   sorted BoltDB index and reads only one page forward (`O(log n + page_size)`),
   with memory bounded by the page size. Page latency is flat (~0.7 ms for a
-  1000-key page) whether the bucket holds 1,000 or 1,000,000 objects. All
-  listing (versioned and non-versioned) now goes through this metadata index
-  instead of an `O(n)` filesystem walk. See `docs/SCALING.md` §11.
+  1000-key page) — measured (not extrapolated) from 1,000 to 100,000,000 objects
+  in a single prefix. All listing (versioned and non-versioned) now goes through
+  this metadata index instead of an `O(n)` filesystem walk. See
+  `docs/SCALING.md` §11.
 
 ## [4.2.9] - 2026-06-28
 ### Added
