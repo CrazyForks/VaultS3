@@ -1,11 +1,11 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1063,14 +1063,32 @@ func (s *Store) ListObjectVersions(bucket, prefix, keyMarker, versionMarker stri
 // delete markers. This is used by ListObjectsV2/V1 (and the dashboard) for
 // versioned buckets, where the object data lives under .vs/ and is therefore
 // invisible to the filesystem walk in the storage engine's ListObjects.
+// ListLatestObjects returns the latest (non-delete-marker) objects in a bucket
+// under prefix, after startAfter, up to maxKeys (maxKeys<=0 means all).
+//
+// It relies on BoltDB storing keys sorted: the cursor seeks straight to the
+// continuation marker and reads only one page forward, then stops — O(log n +
+// pageSize) per page and bounded memory, regardless of how many objects the
+// bucket holds. (No read-everything-then-sort.)
 func (s *Store) ListLatestObjects(bucket, prefix, startAfter string, maxKeys int) ([]ObjectMeta, bool, error) {
-	var objects []ObjectMeta
 	bucketPrefix := bucket + "/"
+	bp := []byte(bucketPrefix)
+
+	// Jump straight to the page: start at the later of the prefix or the
+	// continuation marker (both are valid lower bounds, keys are sorted).
+	start := prefix
+	if startAfter > start {
+		start = startAfter
+	}
+	seekKey := []byte(bucketPrefix + start)
+
+	var objects []ObjectMeta
+	truncated := false
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(objectsBucket)
 		c := b.Cursor()
-		for k, v := c.Seek([]byte(bucketPrefix)); k != nil && strings.HasPrefix(string(k), bucketPrefix); k, v = c.Next() {
+		for k, v := c.Seek(seekKey); k != nil && bytes.HasPrefix(k, bp); k, v = c.Next() {
 			var meta ObjectMeta
 			if err := json.Unmarshal(v, &meta); err != nil {
 				continue
@@ -1079,15 +1097,21 @@ func (s *Store) ListLatestObjects(bucket, prefix, startAfter string, maxKeys int
 			if meta.Bucket != bucket {
 				continue
 			}
+			if prefix != "" && !strings.HasPrefix(meta.Key, prefix) {
+				// Keys are sorted and we started at/after the prefix, so the first
+				// key without the prefix ends the prefix range.
+				break
+			}
+			if startAfter != "" && meta.Key <= startAfter {
+				continue
+			}
 			// The latest version may be a delete marker — those are not listed.
 			if meta.DeleteMarker {
 				continue
 			}
-			if prefix != "" && !strings.HasPrefix(meta.Key, prefix) {
-				continue
-			}
-			if startAfter != "" && meta.Key <= startAfter {
-				continue
+			if maxKeys > 0 && len(objects) >= maxKeys {
+				truncated = true // a further matching key exists → there's another page
+				break
 			}
 			objects = append(objects, meta)
 		}
@@ -1096,17 +1120,6 @@ func (s *Store) ListLatestObjects(bucket, prefix, startAfter string, maxKeys int
 	if err != nil {
 		return nil, false, err
 	}
-
-	sort.Slice(objects, func(i, j int) bool {
-		return objects[i].Key < objects[j].Key
-	})
-
-	truncated := false
-	if maxKeys > 0 && len(objects) > maxKeys {
-		objects = objects[:maxKeys]
-		truncated = true
-	}
-
 	return objects, truncated, nil
 }
 

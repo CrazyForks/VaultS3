@@ -124,7 +124,8 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Consistent hashing** — xxhash64-based hash ring with virtual nodes for automatic data placement and request routing across cluster nodes via reverse proxy
 - **Erasure coding** — Reed-Solomon encoding (configurable data/parity shards) for disk-failure protection with background healer that auto-reconstructs degraded objects
 - **High availability** — Automatic failure detection (health probes with suspect/down state machine), failover proxy routing to healthy replicas, and background rebalancer for membership changes
-  - 📖 See the **[Scaling & Operations Guide](docs/SCALING.md)** for multi-disk erasure coding, multi-node cluster setup, and lost-disk / lost-server recovery runbooks
+- **Scalable listing** — Object listing is served from the sorted BoltDB metadata index (seek to the page, `O(log n + page_size)`), so `ListObjectsV2` page latency stays flat (~0.7 ms per 1000-key page) whether a prefix holds a thousand or a million objects — no full-bucket scan
+  - 📖 See the **[Scaling & Operations Guide](docs/SCALING.md)** for multi-disk erasure coding, multi-node cluster setup, large-prefix listing, and lost-disk / lost-server recovery runbooks
 - **Active-active replication** — Bidirectional site-to-site sync with vector clocks for causal ordering, pluggable conflict resolution (last-writer-wins, largest-object, site-preference), and change log for efficient delta sync
 - **Async replication** — One-way async replication to peer VaultS3 instances with BoltDB-backed queue, retry with exponential backoff, and loop prevention
 - **CLI tool** — Standalone `vaults3-cli` binary for bucket, object, user, and replication management without AWS CLI

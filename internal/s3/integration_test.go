@@ -1040,6 +1040,70 @@ func TestIntegrationListObjects(t *testing.T) {
 	}
 }
 
+// TestIntegrationListObjectsV2Pagination walks every page of a ListObjectsV2
+// listing via the continuation-token protocol — the regression guard for the
+// bug where the V2 handler set IsTruncated but never emitted a
+// NextContinuationToken (so clients could not page past the first 1000 keys).
+func TestIntegrationListObjectsV2Pagination(t *testing.T) {
+	ts := newIntegrationServer(t)
+	bucket := "page-bucket"
+
+	resp := doSigned(t, http.MethodPut, ts.URL+"/"+bucket, nil)
+	resp.Body.Close()
+
+	want := []string{"k-0", "k-1", "k-2", "k-3", "k-4"}
+	for _, k := range want {
+		resp = doSigned(t, http.MethodPut, ts.URL+"/"+bucket+"/"+k, []byte(k))
+		resp.Body.Close()
+	}
+
+	type listResult struct {
+		IsTruncated bool `xml:"IsTruncated"`
+		Contents    []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+		NextContinuationToken string `xml:"NextContinuationToken"`
+	}
+
+	var got []string
+	token := ""
+	pages := 0
+	for {
+		url := ts.URL + "/" + bucket + "?list-type=2&max-keys=2"
+		if token != "" {
+			url += "&continuation-token=" + token
+		}
+		resp = doSigned(t, http.MethodGet, url, nil)
+		body := readBody(t, resp)
+
+		var lr listResult
+		if err := xml.Unmarshal([]byte(body), &lr); err != nil {
+			t.Fatalf("unmarshal page %d: %v\n%s", pages, err, body)
+		}
+		pages++
+		for _, c := range lr.Contents {
+			got = append(got, c.Key)
+		}
+		if !lr.IsTruncated {
+			break
+		}
+		if lr.NextContinuationToken == "" {
+			t.Fatalf("truncated page %d missing NextContinuationToken: %s", pages, body)
+		}
+		token = lr.NextContinuationToken
+		if pages > 10 {
+			t.Fatal("continuation did not terminate")
+		}
+	}
+
+	if pages != 3 {
+		t.Errorf("expected 3 pages (2+2+1), got %d", pages)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("paginated keys = %v, want %v", got, want)
+	}
+}
+
 // --- Path Traversal Security Tests ---
 
 func TestIntegrationPathTraversal(t *testing.T) {

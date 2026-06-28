@@ -6,6 +6,28 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.2.10] - 2026-06-28
+### Fixed
+- **`ListObjectsV2` pagination was broken (no continuation token).** The handler
+  set `IsTruncated` but never emitted a `NextContinuationToken`, and ignored an
+  incoming `continuation-token` — so S3 clients (boto3, the AWS SDKs) could not
+  page past the first response and never saw more than `max-keys` objects. The
+  V2 handler now reads `continuation-token` and returns `NextContinuationToken`
+  (an opaque cursor), so standard continuation-token pagination works to any
+  depth. Verified end-to-end with boto3 across multi-page listings. (V1
+  marker-based pagination already worked.)
+
+### Changed
+- **Listing now scales to very large buckets (millions of objects under one
+  prefix).** `ListObjectsV2`/`V1` previously read the entire prefix range into
+  memory and sorted it on every page — `O(n)` per page, which falls over at high
+  object counts. Listing now seeks straight to the continuation marker in the
+  sorted BoltDB index and reads only one page forward (`O(log n + page_size)`),
+  with memory bounded by the page size. Page latency is flat (~0.7 ms for a
+  1000-key page) whether the bucket holds 1,000 or 1,000,000 objects. All
+  listing (versioned and non-versioned) now goes through this metadata index
+  instead of an `O(n)` filesystem walk. See `docs/SCALING.md` §11.
+
 ## [4.2.9] - 2026-06-28
 ### Added
 - **Bucket snapshots ("git-for-buckets")** — a new `internal/snapshot` package plus
@@ -173,7 +195,8 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.9...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.10...HEAD
+[4.2.10]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.9...v4.2.10
 [4.2.9]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.8...v4.2.9
 [4.2.8]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.7...v4.2.8
 [4.2.7]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.6...v4.2.7

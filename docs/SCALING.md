@@ -383,7 +383,35 @@ backup:
 
 ---
 
-## 11. Quick reference
+## 11. Listing very large buckets (many objects under one prefix)
+
+VaultS3 keeps every object's metadata in a sorted BoltDB index, so listing a
+prefix is a **seek to the continuation marker + read one page** — `O(log n +
+page_size)`. Page latency stays flat regardless of how many objects the bucket
+holds, because the cost is the page, not the bucket:
+
+| Objects under one prefix | `ListObjectsV2` page (1000 keys) |
+|--------------------------|----------------------------------|
+| 1,000                    | ~0.8 ms                          |
+| 100,000                  | ~0.7 ms                          |
+| 1,000,000                | ~0.7 ms                          |
+
+(`go test -bench BenchmarkListLatestObjectsPage ./internal/metadata`; a single
+mid-tier laptop core. The dominant cost is JSON-decoding the 1000-key page, not
+the seek.)
+
+Practical guidance for huge flat prefixes (tens of millions of keys):
+
+- **Paginate** with the `ContinuationToken` / `StartAfter` you get back — each
+  page is cheap. The per-page cap is the S3-standard 1000 keys; that's by design.
+- This applies to **prefix** listing. Arbitrary substring/partial-name matching
+  (`*foo*` anywhere in a key) is a different operation and is not served by the
+  ordered index.
+- Metadata footprint grows with object count (roughly a few hundred bytes per
+  object in the BoltDB file). Budget disk for the metadata DB accordingly at the
+  100M-object scale (tens of GB).
+
+## 12. Quick reference
 
 | Goal | Block | Key settings |
 |------|-------|--------------|

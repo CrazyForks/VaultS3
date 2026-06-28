@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -1292,23 +1293,24 @@ func (h *ObjectHandler) ListObjectVersions(w http.ResponseWriter, r *http.Reques
 // the storage engine's filesystem walk, so the metadata store's latest-pointer
 // index is used as the source of truth. Non-versioned buckets use the engine.
 func (h *ObjectHandler) listObjects(bucket, prefix, startAfter string, maxKeys int) ([]storage.ObjectInfo, bool, error) {
-	if v, _ := h.store.GetBucketVersioning(bucket); v == "Enabled" || v == "Suspended" {
-		metas, truncated, err := h.store.ListLatestObjects(bucket, prefix, startAfter, maxKeys)
-		if err != nil {
-			return nil, false, err
-		}
-		objects := make([]storage.ObjectInfo, 0, len(metas))
-		for _, m := range metas {
-			objects = append(objects, storage.ObjectInfo{
-				Key:          m.Key,
-				Size:         m.Size,
-				LastModified: m.LastModified,
-				ETag:         m.ETag,
-			})
-		}
-		return objects, truncated, nil
+	// All listing goes through the BoltDB metadata index (sorted keys → seek to
+	// the page, O(log n + pageSize)), regardless of versioning. Every write path
+	// updates the store, so it is the authoritative listing source — and this
+	// avoids the O(n) filesystem walk that doesn't scale to very large buckets.
+	metas, truncated, err := h.store.ListLatestObjects(bucket, prefix, startAfter, maxKeys)
+	if err != nil {
+		return nil, false, err
 	}
-	return h.engine.ListObjects(bucket, prefix, startAfter, maxKeys)
+	objects := make([]storage.ObjectInfo, 0, len(metas))
+	for _, m := range metas {
+		objects = append(objects, storage.ObjectInfo{
+			Key:          m.Key,
+			Size:         m.Size,
+			LastModified: m.LastModified,
+			ETag:         m.ETag,
+		})
+	}
+	return objects, truncated, nil
 }
 
 func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -1319,6 +1321,7 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 
 	prefix := r.URL.Query().Get("prefix")
 	startAfter := r.URL.Query().Get("start-after")
+	contToken := r.URL.Query().Get("continuation-token")
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	maxKeys := 1000
 	if maxKeysStr != "" {
@@ -1327,7 +1330,17 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		}
 	}
 
-	objects, truncated, err := h.listObjects(bucket, prefix, startAfter, maxKeys)
+	// A continuation token (opaque, base64 of the last key returned) takes
+	// precedence over start-after and resumes exactly where the previous page
+	// ended — this is what lets clients walk past the first page at any scale.
+	effectiveStart := startAfter
+	if contToken != "" {
+		if dec, err := base64.StdEncoding.DecodeString(contToken); err == nil {
+			effectiveStart = string(dec)
+		}
+	}
+
+	objects, truncated, err := h.listObjects(bucket, prefix, effectiveStart, maxKeys)
 	if err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
@@ -1342,23 +1355,28 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		StorageClass string `xml:"StorageClass"`
 	}
 	type xmlResponse struct {
-		XMLName     xml.Name     `xml:"ListBucketResult"`
-		Xmlns       string       `xml:"xmlns,attr"`
-		Name        string       `xml:"Name"`
-		Prefix      string       `xml:"Prefix"`
-		MaxKeys     int          `xml:"MaxKeys"`
-		IsTruncated bool         `xml:"IsTruncated"`
-		Contents    []xmlContent `xml:"Contents"`
-		KeyCount    int          `xml:"KeyCount"`
+		XMLName               xml.Name     `xml:"ListBucketResult"`
+		Xmlns                 string       `xml:"xmlns,attr"`
+		Name                  string       `xml:"Name"`
+		Prefix                string       `xml:"Prefix"`
+		MaxKeys               int          `xml:"MaxKeys"`
+		IsTruncated           bool         `xml:"IsTruncated"`
+		Contents              []xmlContent `xml:"Contents"`
+		KeyCount              int          `xml:"KeyCount"`
+		ContinuationToken     string       `xml:"ContinuationToken,omitempty"`
+		NextContinuationToken string       `xml:"NextContinuationToken,omitempty"`
+		StartAfter            string       `xml:"StartAfter,omitempty"`
 	}
 
 	resp := xmlResponse{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:        bucket,
-		Prefix:      prefix,
-		MaxKeys:     maxKeys,
-		IsTruncated: truncated,
-		KeyCount:    len(objects),
+		Xmlns:             "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:              bucket,
+		Prefix:            prefix,
+		MaxKeys:           maxKeys,
+		IsTruncated:       truncated,
+		KeyCount:          len(objects),
+		ContinuationToken: contToken,
+		StartAfter:        startAfter,
 	}
 
 	for _, obj := range objects {
@@ -1369,6 +1387,12 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 			Size:         obj.Size,
 			StorageClass: "STANDARD",
 		})
+	}
+
+	// When more keys remain, hand back an opaque token the client echoes as
+	// continuation-token to fetch the next page.
+	if truncated && len(objects) > 0 {
+		resp.NextContinuationToken = base64.StdEncoding.EncodeToString([]byte(objects[len(objects)-1].Key))
 	}
 
 	writeXML(w, http.StatusOK, resp)
