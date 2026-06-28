@@ -333,6 +333,10 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/version" && r.Method == http.MethodGet:
 		h.handleVersion(w, r)
 
+	// Cost estimator (TCO vs managed clouds)
+	case path == "/tco" && r.Method == http.MethodGet:
+		h.handleTCO(w, r)
+
 	// Migration from an S3-compatible source
 	case path == "/migrate/test" && r.Method == http.MethodPost:
 		h.handleMigrateTest(w, r)

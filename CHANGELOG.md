@@ -7,6 +7,11 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 ## [Unreleased]
 
 ### Added
+- **Cost estimator** — a dashboard "Cost" page (and `GET /api/v1/tco`) that
+  estimates the monthly/yearly cost of your live stored data on AWS S3, Google
+  Cloud Storage, Cloudflare R2, Backblaze B2, and Wasabi (storage + adjustable
+  egress) against self-hosting with VaultS3 (egress-free, $0). Pricing rates come
+  from the server; the egress slider recomputes instantly client-side.
 - **Auto-update (opt-in)** — a new `internal/selfupdate` package checks GitHub
   Releases on a daily interval and surfaces a **dashboard banner** when a newer
   version is out (`GET /api/v1/version`). With `auto_update.apply: true` it also

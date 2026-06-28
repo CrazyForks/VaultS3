@@ -132,6 +132,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Full-text search** — In-memory search index over object metadata, tags, content type, and key patterns with incremental updates
 - **Semantic / vector search (optional)** — Embeds object text via any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenAI…) and serves similarity search + RAG retrieval from `POST /api/v1/vectors/query` — all in the single binary, no external vector database. Searchable from the dashboard (Keyword / Semantic toggle)
 - **Migrate from S3** — Import buckets and objects from MinIO, AWS S3, or any S3-compatible source via a dashboard wizard (test connection → pick buckets → live progress), no AWS SDK required
+- **Cost estimator** — A dashboard panel that estimates what your stored data would cost on AWS S3, GCS, Cloudflare R2, Backblaze B2, and Wasabi (storage + egress) vs. self-hosting — egress-free — for free (`GET /api/v1/tco`)
 - **Webhook virus scanning** — POST uploaded objects to a configurable scan endpoint (ClamAV, VirusTotal, etc.) with quarantine bucket for infected files
 - **Data tiering** — Automatic hot/cold storage migration based on access patterns with transparent reads and manual migration API
 - **Backup scheduler** — Scheduled full/incremental backups to local directory targets with cron-like scheduling and backup history
