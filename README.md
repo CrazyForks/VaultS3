@@ -495,6 +495,8 @@ The built-in dashboard is available at `http://localhost:9000/dashboard/`. Login
 - Backups — status cards, history table, manual trigger button
 - Activity log — real-time S3 operation feed with auto-refresh
 - Storage stats — total storage, per-bucket breakdown, runtime metrics, auto-refresh toggle (30s)
+- Migrate — import buckets from any S3-compatible source with live progress and a Cancel button for in-flight jobs
+- Version indicator — the running version is shown at the bottom of the sidebar, with an "update available" hint linking to releases
 - Dark/light theme — toggle with system preference detection
 - Responsive layout — mobile-friendly with collapsible sidebar
 - JWT-based authentication (24h tokens)
