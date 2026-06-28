@@ -70,7 +70,7 @@ func signV4(req *http.Request, accessKey, secretKey, region string) {
 	}
 
 	canonReq := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		req.Method, req.URL.Path, canonQuery,
+		req.Method, uriEncodePath(req.URL.Path), canonQuery,
 		canonHeaders.String(), signedHeaders, bodyHash)
 
 	scope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStr, region)
@@ -94,6 +94,16 @@ func hmacSign(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
 	return h.Sum(nil)
+}
+
+// uriEncodePath strictly encodes each path segment (preserving '/') per AWS
+// SigV4 rules, so signatures match for keys with '&', '$', spaces, etc.
+func uriEncodePath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = uriEncode(seg)
+	}
+	return strings.Join(segs, "/")
 }
 
 func uriEncode(s string) string {

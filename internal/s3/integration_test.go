@@ -1147,3 +1147,82 @@ func TestIntegrationInlineTagging(t *testing.T) {
 		t.Errorf("inline tags not saved: %s", body)
 	}
 }
+
+// TestIntegrationSpecialCharKeyStrictSignature guards the server side of issue
+// #9: standard S3 clients (boto3, aws-cli, the SDKs) strictly percent-encode the
+// path in their SigV4 canonical URI ('&'→%26, '$'→%24, space→%20). The server
+// must encode the same way when validating, or every special-character key is
+// rejected with "signature mismatch". This signs a PUT+GET with a strict,
+// boto3-style signature — independent of the server's own buildCanonicalRequest
+// — so it fails if the server reverts to using the raw path.
+func TestIntegrationSpecialCharKeyStrictSignature(t *testing.T) {
+	ts := newIntegrationServer(t)
+	bucket := "spchar-bucket"
+
+	resp := doSigned(t, http.MethodPut, ts.URL+"/"+bucket, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create bucket: %d", resp.StatusCode)
+	}
+
+	key := "1027708 Artik & ASTI feat $ x/soft slidertick4.wav" // &, $, space, /
+	data := []byte("audio-bytes")
+	wirePath := "/" + bucket + uriEncodePath("/"+key)
+
+	putReq, _ := http.NewRequest(http.MethodPut, ts.URL+wirePath, bytes.NewReader(data))
+	signV4Strict(putReq, testAccessKey, testSecretKey, data)
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT special-char key: got %d, want 200 (server rejected a strict signature)", putResp.StatusCode)
+	}
+
+	getReq, _ := http.NewRequest(http.MethodGet, ts.URL+wirePath, nil)
+	signV4Strict(getReq, testAccessKey, testSecretKey, nil)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET special-char key: got %d, want 200", getResp.StatusCode)
+	}
+	if got, _ := io.ReadAll(getResp.Body); string(got) != string(data) {
+		t.Fatalf("round-trip bytes = %q, want %q", got, data)
+	}
+}
+
+// signV4Strict signs a request the way standard S3 clients do — strictly
+// percent-encoding the canonical URI path — independent of the server's own
+// buildCanonicalRequest.
+func signV4Strict(r *http.Request, accessKey, secretKey string, body []byte) {
+	now := time.Now().UTC()
+	dateStr := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+	r.Header.Set("X-Amz-Date", amzDate)
+	r.Header.Set("Host", r.Host)
+	if body == nil {
+		body = []byte{}
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	h := sha256.Sum256(body)
+	payloadHash := hex.EncodeToString(h[:])
+	r.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	canonHeaders := fmt.Sprintf("host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n", r.Host, payloadHash, amzDate)
+	canonicalRequest := strings.Join([]string{
+		r.Method, uriEncodePath(r.URL.Path), "", canonHeaders, signedHeaders, payloadHash,
+	}, "\n")
+	scope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStr, testRegion)
+	hash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, scope, hex.EncodeToString(hash[:]))
+	signingKey := deriveSigningKey(secretKey, dateStr, testRegion, "s3")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	r.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s/%s/%s/s3/aws4_request, SignedHeaders=%s, Signature=%s",
+		accessKey, dateStr, testRegion, signedHeaders, signature))
+}

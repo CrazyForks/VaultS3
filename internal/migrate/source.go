@@ -120,8 +120,11 @@ func (s *Source) ListObjects(bucket, continuationToken string) (objs []ObjectInf
 // GetObject opens an object's body for streaming. The caller must Close it.
 // Returns the body, content type, and content length (-1 if unknown).
 func (s *Source) GetObject(bucket, key string) (io.ReadCloser, string, int64, error) {
-	u := &url.URL{Path: "/" + bucket + "/" + key}
-	full := s.endpoint + u.String()
+	// Strict AWS URI-encoding so the wire path and the SigV4 canonical URI agree.
+	// Go's default path escaping leaves sub-delimiters like '&' and '$' literal,
+	// which made the source's signature differ from the server's → 403
+	// SignatureDoesNotMatch for keys containing them (issue #9).
+	full := s.endpoint + uriEncodePath("/"+bucket+"/"+key)
 	req, err := http.NewRequest(http.MethodGet, full, nil)
 	if err != nil {
 		return nil, "", 0, err
@@ -209,7 +212,9 @@ func (s *Source) sign(req *http.Request) {
 		canonicalQuery = strings.Join(parts, "&")
 	}
 
-	uri := req.URL.EscapedPath()
+	// Canonical URI must use strict AWS encoding. Go's EscapedPath() leaves '&',
+	// '$' and other sub-delimiters literal, which mismatches the server (issue #9).
+	uri := uriEncodePath(req.URL.Path)
 	if uri == "" {
 		uri = "/"
 	}
@@ -252,4 +257,15 @@ func uriEncode(s string) string {
 		}
 	}
 	return buf.String()
+}
+
+// uriEncodePath strictly URI-encodes each segment of a path while preserving the
+// '/' separators — the AWS SigV4 canonical-URI rule. Used for both the request
+// line and the signature so they agree even for keys with '&', '$', spaces, etc.
+func uriEncodePath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = uriEncode(seg)
+	}
+	return strings.Join(segs, "/")
 }

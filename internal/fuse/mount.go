@@ -470,7 +470,7 @@ func signRequest(req *http.Request, accessKey, secretKey, region string) {
 	req.Header.Set("X-Amz-Date", amzdate)
 	req.Header.Set("Host", req.URL.Host)
 
-	canonicalURI := req.URL.Path
+	canonicalURI := uriEncodePath(req.URL.Path)
 	if canonicalURI == "" {
 		canonicalURI = "/"
 	}
@@ -502,6 +502,25 @@ func signRequest(req *http.Request, accessKey, secretKey, region string) {
 func sha256hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+// uriEncodePath strictly URI-encodes each path segment (preserving '/') per the
+// AWS SigV4 canonical-URI rules, so signatures match the server for keys with
+// '&', '$', spaces, etc. For keys without special characters it is a no-op.
+func uriEncodePath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		var b strings.Builder
+		for _, c := range []byte(seg) {
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+				b.WriteByte(c)
+			} else {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+		}
+		segs[i] = b.String()
+	}
+	return strings.Join(segs, "/")
 }
 
 func hmacSHA256(key, data []byte) []byte {

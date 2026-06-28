@@ -1,6 +1,8 @@
 package migrate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -286,4 +288,51 @@ func TestMigrateBadEndpoint(t *testing.T) {
 	if _, err := m.TestConnection(StartConfig{Endpoint: "http://127.0.0.1:1", AccessKey: "k", SecretKey: "s"}); err == nil {
 		t.Fatal("expected error connecting to a dead endpoint")
 	}
+}
+
+// TestGetObjectSpecialCharsSignature is a regression guard for issue #9: object
+// keys containing '&', '$', or spaces produced a SigV4 SignatureDoesNotMatch
+// because the path was escaped with Go's default rules (which leave sub-delims
+// literal) instead of the strict AWS canonical encoding. The stub server here
+// recomputes the signature the strict (AWS) way and rejects any mismatch.
+func TestGetObjectSpecialCharsSignature(t *testing.T) {
+	const access, secret, region = "AKIATEST", "secretkey1234567890", "us-east-1"
+	const bucket = "bucket1"
+	const key = "1027708 Artik & ASTI feat Artyom $ Kacher/soft-slidertick4.wav"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := "Signature=" + strictSigV4(r, secret, region)
+		if !strings.HasSuffix(r.Header.Get("Authorization"), want) {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code></Error>`)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/wav")
+		io.WriteString(w, "AUDIO")
+	}))
+	defer srv.Close()
+
+	body, _, _, err := NewSource(srv.URL, access, secret, region, 10).GetObject(bucket, key)
+	if err != nil {
+		t.Fatalf("GetObject with special chars (&, $, space): %v", err)
+	}
+	defer body.Close()
+	if b, _ := io.ReadAll(body); string(b) != "AUDIO" {
+		t.Fatalf("body = %q, want AUDIO", b)
+	}
+}
+
+// strictSigV4 recomputes the request's SigV4 signature using strict AWS canonical
+// URI encoding — the encoding a real S3 server uses to validate the request.
+func strictSigV4(r *http.Request, secret, region string) string {
+	amzDate := r.Header.Get("X-Amz-Date")
+	dateStr := amzDate[:8]
+	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	canonHeaders := fmt.Sprintf("host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n", r.Host, payloadHash, amzDate)
+	canonReq := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s", r.Method, uriEncodePath(r.URL.Path), "", canonHeaders, signedHeaders, payloadHash)
+	scope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStr, region)
+	hash := sha256.Sum256([]byte(canonReq))
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, scope, hex.EncodeToString(hash[:]))
+	return hex.EncodeToString(hmacSHA256(deriveKey(secret, dateStr, region, "s3"), []byte(stringToSign)))
 }

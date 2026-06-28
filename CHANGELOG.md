@@ -5,6 +5,23 @@ All notable changes to VaultS3 are documented here. The format is based on
 semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
+### Fixed
+- **Object keys with `&`, `$`, or spaces broke SigV4 auth (issue #9).** VaultS3
+  built the SigV4 canonical URI from the raw request path, which leaves
+  sub-delimiters like `&` and `$` literal — but standard S3 clients (boto3,
+  aws-cli, the AWS SDKs) percent-encode them strictly (`&`→`%26`, `$`→`%24`,
+  space→`%20`, …). The signatures therefore didn't match → `SignatureDoesNotMatch`
+  / `AccessDenied` for any key with special characters. This affected both
+  directions and is now fixed everywhere the canonical URI is computed:
+  - **Server** (`internal/s3` auth) — now validates with strict per-segment
+    encoding, so standard S3 clients can read/write special-character keys.
+  - **Migrate source client** (`internal/migrate`) — signs strictly, so
+    migrating such keys from external S3 (the reported case) succeeds.
+  - **Replication, FUSE, and CLI** clients — sign strictly too, so they keep
+    working against the now-strict server.
+  Keys without special characters are unaffected (strict == raw for them).
+  Verified end-to-end live (boto3 PUT + cross-instance migration of a key with
+  `&`, `$`, and spaces) plus regression tests on both the client and server sides.
 
 ## [4.2.10] - 2026-06-28
 ### Fixed

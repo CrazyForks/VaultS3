@@ -315,7 +315,12 @@ func parseAuthParams(s string) map[string]string {
 func buildCanonicalRequest(r *http.Request, signedHeaders string) string {
 	method := r.Method
 
-	uri := r.URL.Path
+	// Canonical URI must be the strict per-segment URI-encoding of the path
+	// (AWS SigV4 rules), so signatures from standard S3 clients (boto3, aws-cli,
+	// the SDKs) match for keys containing '&', '$', spaces, etc. Using the raw
+	// r.URL.Path here rejected every such key with "signature mismatch" (issue #9).
+	// For keys without special characters this is identical to the raw path.
+	uri := uriEncodePath(r.URL.Path)
 	if uri == "" {
 		uri = "/"
 	}
@@ -413,6 +418,17 @@ func uriEncode(s string) string {
 		}
 	}
 	return buf.String()
+}
+
+// uriEncodePath strictly URI-encodes each path segment while preserving the '/'
+// separators — the AWS SigV4 canonical-URI rule. (uriEncode alone would also
+// encode '/', which is wrong for the path.)
+func uriEncodePath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = uriEncode(seg)
+	}
+	return strings.Join(segs, "/")
 }
 
 func hmacSHA256(key, data []byte) []byte {
