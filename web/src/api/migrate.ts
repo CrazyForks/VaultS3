@@ -32,3 +32,7 @@ export function startMigration(s: MigrateSource): Promise<{ jobId: string }> {
 export function listMigrateJobs(): Promise<MigrateJob[]> {
   return apiFetch('/migrate/jobs')
 }
+
+export function cancelMigration(jobId: string): Promise<{ status: string }> {
+  return apiFetch('/migrate/cancel', { method: 'POST', body: JSON.stringify({ jobId }) })
+}

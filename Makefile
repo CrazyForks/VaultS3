@@ -4,6 +4,10 @@ BINARY_NAME=vaults3
 CLI_NAME=vaults3-cli
 BUILD_DIR=.
 
+# Build version injected into the binary (nearest git tag, or "dev" outside a repo).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS=-X main.version=$(VERSION)
+
 # Build React frontend
 web:
 	cd web && npm install && npm run build
@@ -12,13 +16,13 @@ web:
 
 # Build Go binary (includes frontend)
 build: web
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/vaults3
-	go build -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/vaults3-cli
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/vaults3
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/vaults3-cli
 
 # Build Go only (skip frontend, for backend-only dev)
 build-go:
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/vaults3
-	go build -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/vaults3-cli
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/vaults3
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(CLI_NAME) ./cmd/vaults3-cli
 
 # Build CLI only
 cli:

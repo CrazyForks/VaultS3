@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { testMigrateSource, startMigration, listMigrateJobs, type MigrateJob } from '../api/migrate'
+import { testMigrateSource, startMigration, listMigrateJobs, cancelMigration, type MigrateJob } from '../api/migrate'
 
 export default function MigrationPage() {
   const [endpoint, setEndpoint] = useState('')
@@ -67,6 +67,24 @@ export default function MigrationPage() {
     }
   }
 
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set())
+
+  const handleCancel = async (id: string) => {
+    setCancelling(prev => new Set(prev).add(id))
+    try {
+      await cancelMigration(id)
+      await refreshJobs()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel migration')
+    } finally {
+      setCancelling(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   const toggle = (b: string) => {
     setSelected(prev => {
       const next = new Set(prev)
@@ -77,6 +95,9 @@ export default function MigrationPage() {
 
   const input = "w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
   const label = "block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1"
+
+  // Guard against double-clicks spawning duplicate migrations of the same source.
+  const sourceBusy = jobs.some(j => j.status === 'running' && j.endpoint === endpoint.trim())
 
   return (
     <div>
@@ -136,10 +157,13 @@ export default function MigrationPage() {
               ))}
             </div>
           )}
-          <button onClick={handleStart} disabled={starting || selected.size === 0}
-            className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-medium transition-colors">
-            {starting ? 'Starting...' : `Migrate ${selected.size} bucket${selected.size !== 1 ? 's' : ''}`}
+          <button onClick={handleStart} disabled={starting || selected.size === 0 || sourceBusy}
+            className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+            {starting ? 'Starting...' : sourceBusy ? 'Migration in progress…' : `Migrate ${selected.size} bucket${selected.size !== 1 ? 's' : ''}`}
           </button>
+          {sourceBusy && (
+            <p className="mt-2 text-xs text-gray-400">A migration from this source is already running — cancel or wait for it to finish.</p>
+          )}
         </div>
       )}
 
@@ -152,17 +176,29 @@ export default function MigrationPage() {
           <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
             {jobs.map(job => {
               const pct = job.total > 0 ? Math.round(((job.copied + job.failed) / job.total) * 100) : (job.status === 'completed' ? 100 : 0)
-              const color = job.status === 'failed' ? 'bg-red-500' : job.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'
+              const color = job.status === 'failed' ? 'bg-red-500' : job.status === 'completed' ? 'bg-emerald-500' : job.status === 'cancelled' ? 'bg-gray-400' : 'bg-indigo-500'
               return (
                 <div key={job.id} className="px-5 py-4">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2 gap-2">
                     <div className="text-sm text-gray-700 dark:text-gray-300 font-mono truncate">{job.endpoint}</div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      job.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                      : job.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                      : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'}`}>
-                      {job.status}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {job.status === 'running' && (
+                        <button
+                          onClick={() => handleCancel(job.id)}
+                          disabled={cancelling.has(job.id)}
+                          className="text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 transition-colors"
+                        >
+                          {cancelling.has(job.id) ? 'Cancelling…' : 'Cancel'}
+                        </button>
+                      )}
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        job.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                        : job.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                        : job.status === 'cancelled' ? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                        : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'}`}>
+                        {job.status}
+                      </span>
+                    </div>
                   </div>
                   <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden mb-1.5">
                     <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />

@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { getVersion, type VersionStatus } from '../api/version'
 
 const navItems = [
   { to: '/', label: 'Home', icon: homeIcon },
@@ -63,7 +65,39 @@ export default function Sidebar({ onClose }: Props) {
           </NavLink>
         ))}
       </nav>
+      <SidebarVersion />
     </aside>
+  )
+}
+
+function SidebarVersion() {
+  const [v, setV] = useState<VersionStatus | null>(null)
+  useEffect(() => {
+    getVersion().then(setV).catch(() => {})
+  }, [])
+  if (!v?.current) return null
+  const label = /^\d/.test(v.current) ? `v${v.current}` : v.current
+  const outdated = v.updateAvailable && v.latest
+  return (
+    <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+      <a
+        href="https://github.com/Kodiqa-Solutions/VaultS3/releases"
+        target="_blank"
+        rel="noreferrer"
+        title={outdated ? `Update available: ${v.latest}` : 'You are on the latest version'}
+        className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+      >
+        <span className="font-mono">{label}</span>
+        {outdated ? (
+          <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+            update
+          </span>
+        ) : (
+          <span className="text-gray-400 dark:text-gray-500">latest</span>
+        )}
+      </a>
+    </div>
   )
 }
 

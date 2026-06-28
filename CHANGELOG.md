@@ -5,6 +5,24 @@ All notable changes to VaultS3 are documented here. The format is based on
 semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
+### Changed
+- **Docker images and `make build` now embed the build version** (`-ldflags -X
+  main.version`), so the new sidebar version indicator and `-version` show the
+  real release (e.g. `v4.2.12`) instead of `dev`. Previously only the GitHub
+  Release binaries injected it, so Docker/source builds reported `dev`.
+
+### Added
+- **Sidebar version indicator (issue #8).** The dashboard sidebar now shows the
+  running version (from `GET /api/v1/version`) with a subtle "update available"
+  dot when a newer release exists, linking to the releases page — so it's obvious
+  at a glance which version you're on.
+- **Cancel a running migration (issue #8).** The Migrate page shows a Cancel
+  button on in-progress jobs (`POST /api/v1/migrate/cancel`). Cancellation takes
+  effect between objects — any in-flight object copy finishes first, so no
+  partial objects are left behind — and the job ends in a `cancelled` state.
+  Starting an identical migration (same source + buckets) while one is already
+  running is now rejected, so accidental double-clicks no longer spawn parallel
+  copies (the Migrate button also disables while that source is busy).
 
 ## [4.2.11] - 2026-06-28
 ### Fixed

@@ -9,11 +9,13 @@ RUN npm run build
 # Stage 2: Build Go binary
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
+# Build version (e.g. v4.2.12), injected by CI so the dashboard and `-version` show it.
+ARG VERSION=dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/dist ./internal/dashboard/dist
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /vaults3 ./cmd/vaults3
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /vaults3 ./cmd/vaults3
 
 # Stage 3: Runtime
 FROM alpine:3.21

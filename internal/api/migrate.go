@@ -79,3 +79,27 @@ func (h *APIHandler) handleMigrateJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, h.migrator.ListJobs())
 }
+
+// handleMigrateCancel handles POST /api/v1/migrate/cancel — cancels a running job.
+func (h *APIHandler) handleMigrateCancel(w http.ResponseWriter, r *http.Request) {
+	if h.migrator == nil {
+		writeError(w, http.StatusServiceUnavailable, "migration is not available")
+		return
+	}
+	var req struct {
+		JobID string `json:"jobId"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.JobID == "" {
+		writeError(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+	if !h.migrator.Cancel(req.JobID) {
+		writeError(w, http.StatusNotFound, "job not found or not running")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling"})
+}

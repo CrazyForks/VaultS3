@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -56,7 +57,7 @@ type Job struct {
 	ID         string   `json:"id"`
 	Endpoint   string   `json:"endpoint"`
 	Buckets    []string `json:"buckets"`
-	Status     string   `json:"status"` // "running", "completed", "failed"
+	Status     string   `json:"status"` // "running", "completed", "failed", "cancelled"
 	Total      int      `json:"total"`
 	Copied     int      `json:"copied"`
 	Failed     int      `json:"failed"`
@@ -67,16 +68,22 @@ type Job struct {
 
 // Manager runs migrations from S3-compatible sources into the local store/engine.
 type Manager struct {
-	store  *metadata.Store
-	engine storage.Engine
-	mu     sync.RWMutex
-	jobs   map[string]*Job
-	seq    int
+	store   *metadata.Store
+	engine  storage.Engine
+	mu      sync.RWMutex
+	jobs    map[string]*Job
+	cancels map[string]context.CancelFunc // running job -> its cancel func
+	seq     int
 }
 
 // NewManager creates a migration manager.
 func NewManager(store *metadata.Store, engine storage.Engine) *Manager {
-	return &Manager{store: store, engine: engine, jobs: make(map[string]*Job)}
+	return &Manager{
+		store:   store,
+		engine:  engine,
+		jobs:    make(map[string]*Job),
+		cancels: make(map[string]context.CancelFunc),
+	}
 }
 
 // StartConfig describes a migration request.
@@ -110,6 +117,14 @@ func (m *Manager) Start(cfg StartConfig) (string, error) {
 	}
 
 	m.mu.Lock()
+	// Reject an obvious duplicate: the same source already migrating the same
+	// buckets. Prevents accidental double-clicks from spawning parallel copies.
+	for _, j := range m.jobs {
+		if j.Status == "running" && j.Endpoint == cfg.Endpoint && sameBucketSet(j.Buckets, buckets) {
+			m.mu.Unlock()
+			return "", fmt.Errorf("a migration from this source for these buckets is already running")
+		}
+	}
 	m.seq++
 	id := fmt.Sprintf("migrate-%d", m.seq)
 	job := &Job{
@@ -120,14 +135,58 @@ func (m *Manager) Start(cfg StartConfig) (string, error) {
 		StartedAt: time.Now().Unix(),
 	}
 	m.jobs[id] = job
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancels[id] = cancel
 	m.mu.Unlock()
 
-	go m.run(src, job)
+	go m.run(ctx, src, job)
 	return id, nil
 }
 
-func (m *Manager) run(src *Source, job *Job) {
+// sameBucketSet reports whether two bucket lists contain the same set of names.
+func sameBucketSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]bool, len(a))
+	for _, x := range a {
+		seen[x] = true
+	}
+	for _, y := range b {
+		if !seen[y] {
+			return false
+		}
+	}
+	return true
+}
+
+// Cancel stops a running migration. It returns false if the job is unknown or
+// already finished. Cancellation takes effect between objects (an in-flight
+// object copy completes first), so no partial objects are left behind.
+func (m *Manager) Cancel(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job := m.jobs[id]
+	if job == nil || job.Status != "running" {
+		return false
+	}
+	if cancel := m.cancels[id]; cancel != nil {
+		cancel()
+	}
+	return true
+}
+
+func (m *Manager) run(ctx context.Context, src *Source, job *Job) {
+	defer func() {
+		m.mu.Lock()
+		delete(m.cancels, job.ID)
+		m.mu.Unlock()
+	}()
 	for _, bucket := range job.Buckets {
+		if ctx.Err() != nil {
+			m.markCancelled(job)
+			return
+		}
 		if !m.store.BucketExists(bucket) {
 			if err := m.store.CreateBucket(bucket); err != nil {
 				m.setError(job, fmt.Sprintf("create bucket %s: %v", bucket, err))
@@ -153,6 +212,10 @@ func (m *Manager) run(src *Source, job *Job) {
 
 			for _, o := range objs {
 				o := o
+				if ctx.Err() != nil {
+					m.markCancelled(job)
+					return
+				}
 				if err := withRetry("copy "+bucket+"/"+o.Key, func() error { return m.copyOne(src, bucket, o) }); err != nil {
 					slog.Warn("migrate: copy failed after retries", "bucket", bucket, "key", o.Key, "error", err)
 					m.bump(job, func(j *Job) { j.Failed++ })
@@ -208,6 +271,16 @@ func (m *Manager) bump(job *Job, fn func(*Job)) {
 	m.mu.Lock()
 	fn(job)
 	m.mu.Unlock()
+}
+
+func (m *Manager) markCancelled(job *Job) {
+	m.bump(job, func(j *Job) {
+		if j.Status == "running" {
+			j.Status = "cancelled"
+		}
+		j.FinishedAt = time.Now().Unix()
+	})
+	slog.Info("migrate: cancelled", "id", job.ID, "copied", job.Copied, "failed", job.Failed)
 }
 
 func (m *Manager) setError(job *Job, msg string) {

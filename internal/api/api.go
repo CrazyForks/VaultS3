@@ -351,6 +351,8 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleMigrateStart(w, r)
 	case path == "/migrate/jobs" && r.Method == http.MethodGet:
 		h.handleMigrateJobs(w, r)
+	case path == "/migrate/cancel" && r.Method == http.MethodPost:
+		h.handleMigrateCancel(w, r)
 
 	// Observability: real-time event streaming (SSE)
 	case path == "/events" && r.Method == http.MethodGet:

@@ -336,3 +336,99 @@ func strictSigV4(r *http.Request, secret, region string) string {
 	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, scope, hex.EncodeToString(hash[:]))
 	return hex.EncodeToString(hmacSHA256(deriveKey(secret, dateStr, region, "s3"), []byte(stringToSign)))
 }
+
+// TestMigrateCancel verifies an in-progress migration can be cancelled: the job
+// ends in "cancelled" status, stops copying (copied < total), and a second
+// cancel on the now-finished job is a no-op. (issue #8)
+func TestMigrateCancel(t *testing.T) {
+	const n = 200
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Path == "/" {
+			io.WriteString(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>b</Name></Bucket></Buckets></ListAllMyBucketsResult>`)
+			return
+		}
+		if r.URL.Query().Get("list-type") == "2" {
+			var sb strings.Builder
+			sb.WriteString(`<ListBucketResult>`)
+			for i := 0; i < n; i++ {
+				fmt.Fprintf(&sb, `<Contents><Key>obj-%03d</Key><Size>1</Size></Contents>`, i)
+			}
+			sb.WriteString(`<IsTruncated>false</IsTruncated></ListBucketResult>`)
+			io.WriteString(w, sb.String())
+			return
+		}
+		time.Sleep(5 * time.Millisecond) // slow each GET so cancel can interleave
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	store, eng := newLocal(t)
+	m := NewManager(store, eng)
+	id, err := m.Start(StartConfig{Endpoint: srv.URL, AccessKey: "k", SecretKey: "s"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	time.Sleep(40 * time.Millisecond) // let a few objects copy
+	if !m.Cancel(id) {
+		t.Fatal("Cancel returned false for a running job")
+	}
+	job := waitDone(t, m, id)
+
+	if job.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", job.Status)
+	}
+	if job.Copied >= n {
+		t.Fatalf("copied %d of %d — cancel did not stop the migration", job.Copied, n)
+	}
+	if m.Cancel(id) {
+		t.Fatal("Cancel on a finished job should return false")
+	}
+}
+
+// TestMigrateRejectsDuplicate verifies a second migration of the same source +
+// buckets is rejected while the first is still running (issue #8 — double-click
+// guard).
+func TestMigrateRejectsDuplicate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Path == "/" {
+			io.WriteString(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>b</Name></Bucket></Buckets></ListAllMyBucketsResult>`)
+			return
+		}
+		if r.URL.Query().Get("list-type") == "2" {
+			var sb strings.Builder
+			sb.WriteString(`<ListBucketResult>`)
+			for i := 0; i < 200; i++ {
+				fmt.Fprintf(&sb, `<Contents><Key>obj-%03d</Key><Size>1</Size></Contents>`, i)
+			}
+			sb.WriteString(`<IsTruncated>false</IsTruncated></ListBucketResult>`)
+			io.WriteString(w, sb.String())
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	store, eng := newLocal(t)
+	m := NewManager(store, eng)
+	cfg := StartConfig{Endpoint: srv.URL, AccessKey: "k", SecretKey: "s", Buckets: []string{"b"}}
+
+	id1, err := m.Start(cfg)
+	if err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if _, err := m.Start(cfg); err == nil {
+		t.Fatal("expected duplicate migration to be rejected while the first is running")
+	}
+	// after cancelling the first, a new one is allowed again
+	m.Cancel(id1)
+	waitDone(t, m, id1)
+	if _, err := m.Start(cfg); err != nil {
+		t.Fatalf("Start after first finished should be allowed: %v", err)
+	}
+}
