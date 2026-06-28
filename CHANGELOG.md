@@ -7,6 +7,14 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 ## [Unreleased]
 
 ### Added
+- **Migrate from S3 (`internal/migrate`)** — import buckets and objects from any
+  S3-compatible source (MinIO, AWS S3, Garage…) into VaultS3. A SigV4 source
+  client (no AWS SDK) plus an async migrator with per-job progress, exposed via
+  `POST /api/v1/migrate/test`, `POST /api/v1/migrate`, `GET /api/v1/migrate/jobs`
+  and a dashboard wizard (Migrate page: connect → select buckets → live progress).
+- **Dashboard semantic search** — the Search page now has a Keyword / Semantic
+  toggle; Semantic mode queries the vector store and shows results ranked by
+  cosine similarity (greys out with a hint when vector search is disabled).
 - **Semantic / vector search (optional add-on)** — a new `internal/vector` package
   brings RAG-style retrieval into the single binary, with no external vector
   database. A dependency-free cosine-kNN index (persisted across restarts) is fed

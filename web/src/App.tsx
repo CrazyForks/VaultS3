@@ -21,6 +21,7 @@ import ReplicationPage from './pages/ReplicationPage'
 import LambdaPage from './pages/LambdaPage'
 import BackupPage from './pages/BackupPage'
 import SearchPage from './pages/SearchPage'
+import MigrationPage from './pages/MigrationPage'
 import OIDCCallbackPage from './pages/OIDCCallbackPage'
 
 export default function App() {
@@ -49,6 +50,7 @@ export default function App() {
                 <Route path="/lambda" element={<LambdaPage />} />
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/search" element={<SearchPage />} />
+                <Route path="/migrate" element={<MigrationPage />} />
               </Route>
             </Route>
           </Routes>

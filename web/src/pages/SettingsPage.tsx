@@ -48,6 +48,9 @@ export default function SettingsPage() {
     { label: 'Backup Scheduler', enabled: features.backup },
     { label: 'OIDC / SSO', enabled: features.oidc },
     { label: 'Lambda Triggers', enabled: features.lambda },
+    { label: 'Semantic / Vector Search', enabled: features.vector },
+    { label: 'Erasure Coding', enabled: features.erasure },
+    { label: 'Clustering', enabled: features.cluster },
     { label: 'Debug Mode', enabled: features.debug },
   ]
 

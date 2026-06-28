@@ -29,6 +29,7 @@ import (
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metrics"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/middleware"
+	"github.com/Kodiqa-Solutions/VaultS3/internal/migrate"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/notify"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/ratelimit"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/replication"
@@ -556,6 +557,7 @@ func (s *Server) Run() error {
 	apiHandler := api.NewAPIHandler(s.store, s.engine, s.metrics, s.cfg, s.activity)
 	apiHandler.SetS3Authenticator(s.s3Auth)
 	apiHandler.SetSearchIndex(s.searchIndex)
+	apiHandler.SetMigrator(migrate.NewManager(s.store, s.engine))
 	if s.vectorMgr != nil {
 		apiHandler.SetVectorManager(s.vectorMgr)
 		// Persist the vector index periodically so embeddings survive restarts.

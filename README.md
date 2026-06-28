@@ -130,7 +130,8 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **CLI tool** — Standalone `vaults3-cli` binary for bucket, object, user, and replication management without AWS CLI
 - **Presigned upload restrictions** — Enforce max file size, content type whitelist, and key prefix on presigned PUT URLs
 - **Full-text search** — In-memory search index over object metadata, tags, content type, and key patterns with incremental updates
-- **Semantic / vector search (optional)** — Embeds object text via any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenAI…) and serves similarity search + RAG retrieval from `POST /api/v1/vectors/query` — all in the single binary, no external vector database
+- **Semantic / vector search (optional)** — Embeds object text via any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenAI…) and serves similarity search + RAG retrieval from `POST /api/v1/vectors/query` — all in the single binary, no external vector database. Searchable from the dashboard (Keyword / Semantic toggle)
+- **Migrate from S3** — Import buckets and objects from MinIO, AWS S3, or any S3-compatible source via a dashboard wizard (test connection → pick buckets → live progress), no AWS SDK required
 - **Webhook virus scanning** — POST uploaded objects to a configurable scan endpoint (ClamAV, VirusTotal, etc.) with quarantine bucket for infected files
 - **Data tiering** — Automatic hot/cold storage migration based on access patterns with transparent reads and manual migration API
 - **Backup scheduler** — Scheduled full/incremental backups to local directory targets with cron-like scheduling and backup history
@@ -1309,6 +1310,7 @@ VaultS3/
 │   ├── cluster/               — Raft metadata, consistent-hash ring, failure detector, failover proxy, rebalancer
 │   ├── search/                — In-memory full-text search index
 │   ├── vector/                — Optional vector store: cosine kNN index + OpenAI-compatible embedder (semantic search / RAG)
+│   ├── migrate/               — Import from any S3-compatible source (MinIO/AWS/...): SigV4 source client + async migrator
 │   ├── scanner/               — Webhook virus scanning with quarantine
 │   ├── ratelimit/             — Token bucket rate limiter (per IP, per key, per bucket bandwidth)
 │   ├── tiering/               — Hot/cold data tiering manager + remote S3-compatible tier

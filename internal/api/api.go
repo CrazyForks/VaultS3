@@ -13,6 +13,7 @@ import (
 	"github.com/Kodiqa-Solutions/VaultS3/internal/lambda"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metrics"
+	"github.com/Kodiqa-Solutions/VaultS3/internal/migrate"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/ratelimit"
 	s3auth "github.com/Kodiqa-Solutions/VaultS3/internal/s3"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/scanner"
@@ -32,6 +33,7 @@ type APIHandler struct {
 	activity         *ActivityLog
 	searchIndex      *search.Index
 	vectorMgr        *vector.Manager
+	migrator         *migrate.Manager
 	scanner          *scanner.Scanner
 	tieringMgr       *tiering.Manager
 	ecHealer         *erasure.Healer
@@ -64,6 +66,11 @@ func (h *APIHandler) SetSearchIndex(idx *search.Index) {
 // SetVectorManager sets the vector / semantic-search manager.
 func (h *APIHandler) SetVectorManager(m *vector.Manager) {
 	h.vectorMgr = m
+}
+
+// SetMigrator sets the S3 migration manager.
+func (h *APIHandler) SetMigrator(m *migrate.Manager) {
+	h.migrator = m
 }
 
 // SetOIDCValidator sets the OIDC validator for the API handler.
@@ -314,6 +321,14 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleVectorQuery(w, r)
 	case path == "/vectors/status" && r.Method == http.MethodGet:
 		h.handleVectorStatus(w, r)
+
+	// Migration from an S3-compatible source
+	case path == "/migrate/test" && r.Method == http.MethodPost:
+		h.handleMigrateTest(w, r)
+	case path == "/migrate" && r.Method == http.MethodPost:
+		h.handleMigrateStart(w, r)
+	case path == "/migrate/jobs" && r.Method == http.MethodGet:
+		h.handleMigrateJobs(w, r)
 
 	// Observability: real-time event streaming (SSE)
 	case path == "/events" && r.Method == http.MethodGet:

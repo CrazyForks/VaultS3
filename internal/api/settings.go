@@ -28,6 +28,9 @@ type settingsResponse struct {
 		Backup      bool `json:"backup"`
 		OIDC        bool `json:"oidc"`
 		Lambda      bool `json:"lambda"`
+		Vector      bool `json:"vector"`
+		Erasure     bool `json:"erasure"`
+		Cluster     bool `json:"cluster"`
 		Debug       bool `json:"debug"`
 	} `json:"features"`
 	Lifecycle struct {
@@ -68,6 +71,9 @@ func (h *APIHandler) handleSettings(w http.ResponseWriter, _ *http.Request) {
 	resp.Features.Backup = h.cfg.Backup.Enabled
 	resp.Features.OIDC = h.cfg.OIDC.Enabled
 	resp.Features.Lambda = h.cfg.Lambda.Enabled
+	resp.Features.Vector = h.cfg.Vector.Enabled
+	resp.Features.Erasure = h.cfg.Erasure.Enabled
+	resp.Features.Cluster = h.cfg.Cluster.Enabled
 	resp.Features.Debug = h.cfg.Debug
 
 	resp.Lifecycle.ScanIntervalSecs = h.cfg.Lifecycle.ScanIntervalSecs

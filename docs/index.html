@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VaultS3 — Lightweight S3-Compatible Object Storage</title>
   <meta name="description" content="Self-hosted S3-compatible object storage. Single binary, under 80MB RAM, built-in dashboard, erasure coding, Raft clustering, active-active replication, and built-in semantic / vector (RAG) search. The maintained, lightweight alternative to MinIO.">
-  <meta name="keywords" content="s3, object storage, self-hosted, minio alternative, golang, dashboard, lightweight, erasure coding, raft clustering, vector search, semantic search, rag, vector database">
+  <meta name="keywords" content="s3, object storage, self-hosted, minio alternative, migrate from minio, minio replacement, golang, dashboard, lightweight, erasure coding, raft clustering, vector search, semantic search, rag, vector database">
   <meta property="og:title" content="VaultS3 — Lightweight S3-Compatible Object Storage">
   <meta property="og:description" content="Single binary, under 80MB RAM, built-in dashboard, erasure coding, clustering, and built-in semantic / vector (RAG) search. The maintained, lightweight alternative to MinIO.">
   <meta property="og:type" content="website">
@@ -780,6 +780,13 @@
         </div>
         <h3>Tiering &amp; Backup</h3>
         <p>Transparent hot/cold tiering (local or remote S3) with promotion on access, plus a built-in full/incremental backup scheduler with history.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon green">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <h3>Migrate from S3 / MinIO <span style="font-size:.7em;color:#10b981">NEW</span></h3>
+        <p>Leaving MinIO? Point the dashboard wizard at any S3-compatible source, pick your buckets, and import them with live progress. No AWS SDK, no extra tools.</p>
       </div>
     </div>
   </div>

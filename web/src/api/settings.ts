@@ -23,6 +23,9 @@ export interface Settings {
     backup: boolean
     oidc: boolean
     lambda: boolean
+    vector: boolean
+    erasure: boolean
+    cluster: boolean
     debug: boolean
   }
   lifecycle: {

@@ -1,9 +1,11 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchObjects, type SearchResult } from '../api/search'
+import { queryVectors, getVectorStatus, type VectorMatch } from '../api/vectors'
 
 type SortField = 'bucket' | 'key' | 'size' | 'content_type' | 'last_modified'
 type SortDir = 'asc' | 'desc'
+type Mode = 'keyword' | 'semantic'
 
 const PAGE_SIZE = 50
 
@@ -16,19 +18,26 @@ function formatSize(bytes: number): string {
 
 export default function SearchPage() {
   const navigate = useNavigate()
+  const [mode, setMode] = useState<Mode>('keyword')
+  const [vectorEnabled, setVectorEnabled] = useState(false)
   const [query, setQuery] = useState('')
   const [bucket, setBucket] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
+  const [semanticResults, setSemanticResults] = useState<VectorMatch[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
 
-  // Sort state
+  // Sort state (keyword mode)
   const [sortField, setSortField] = useState<SortField>('key')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  // Pagination
+  // Pagination (keyword mode)
   const [page, setPage] = useState(0)
+
+  useEffect(() => {
+    getVectorStatus().then(s => setVectorEnabled(s.enabled)).catch(() => setVectorEnabled(false))
+  }, [])
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return
@@ -36,15 +45,20 @@ export default function SearchPage() {
     setError('')
     setSearched(true)
     try {
-      const data = await searchObjects({ q: query.trim(), bucket: bucket || undefined, limit: 100 })
-      setResults(data || [])
-      setPage(0)
+      if (mode === 'semantic') {
+        const data = await queryVectors(query.trim(), 50, bucket || undefined)
+        setSemanticResults(data.results || [])
+      } else {
+        const data = await searchObjects({ q: query.trim(), bucket: bucket || undefined, limit: 100 })
+        setResults(data || [])
+        setPage(0)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
     } finally {
       setLoading(false)
     }
-  }, [query, bucket])
+  }, [query, bucket, mode])
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -82,18 +96,52 @@ export default function SearchPage() {
       <span className="inline-flex items-center gap-1">
         {label}
         {sortField === field && (
-          <span className="text-indigo-600 dark:text-indigo-400">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>
+          <span className="text-indigo-600 dark:text-indigo-400">{sortDir === 'asc' ? '↑' : '↓'}</span>
         )}
       </span>
     </th>
   )
 
+  const switchMode = (m: Mode) => {
+    setMode(m)
+    setSearched(false)
+    setResults([])
+    setSemanticResults([])
+    setError('')
+  }
+
   return (
     <div>
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Search</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Search objects across all buckets</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+          {mode === 'semantic'
+            ? 'Find objects by meaning using vector embeddings'
+            : 'Search objects across all buckets by key, content type, or tag'}
+        </p>
       </div>
+
+      {/* Mode toggle */}
+      <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 p-0.5 mb-4 bg-gray-100 dark:bg-gray-800">
+        <button
+          onClick={() => switchMode('keyword')}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'keyword' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+        >
+          Keyword
+        </button>
+        <button
+          onClick={() => switchMode('semantic')}
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'semantic' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+        >
+          Semantic <span className="text-[10px] align-top text-emerald-500">AI</span>
+        </button>
+      </div>
+
+      {mode === 'semantic' && !vectorEnabled && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
+          Semantic search is not enabled. Set <code className="font-mono">vector.enabled: true</code> and an embedding endpoint in your config to use it.
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
@@ -103,21 +151,63 @@ export default function SearchPage() {
 
       {/* Search bar */}
       <div className="flex gap-3 mb-6">
-        <input type="text" placeholder="Search by key, content type, or tag..."
+        <input type="text"
+          placeholder={mode === 'semantic' ? 'Describe what you are looking for...' : 'Search by key, content type, or tag...'}
           value={query} onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSearch()}
           className="flex-1 px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm" />
         <input type="text" placeholder="Bucket (optional)" value={bucket}
           onChange={e => setBucket(e.target.value)}
           className="w-44 px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm" />
-        <button onClick={handleSearch} disabled={loading || !query.trim()}
+        <button onClick={handleSearch} disabled={loading || !query.trim() || (mode === 'semantic' && !vectorEnabled)}
           className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors">
           {loading ? 'Searching...' : 'Search'}
         </button>
       </div>
 
-      {/* Results */}
-      {searched && (
+      {/* Semantic results */}
+      {searched && mode === 'semantic' && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+            <span className="text-sm text-gray-500 dark:text-gray-400">{semanticResults.length} match{semanticResults.length !== 1 ? 'es' : ''} by similarity</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-700">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Bucket</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Key</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Similarity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
+                {semanticResults.map((r, i) => (
+                  <tr key={i}
+                    onClick={() => navigate(`/buckets/${r.bucket}/files`)}
+                    className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors cursor-pointer">
+                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{r.bucket}</td>
+                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono text-xs max-w-md truncate">{r.key}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                          <div className="h-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, r.score * 100))}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{(r.score * 100).toFixed(1)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {semanticResults.length === 0 && (
+                  <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400">No matches found</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Keyword results */}
+      {searched && mode === 'keyword' && (
         <>
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
