@@ -259,6 +259,16 @@ func TestMigratePermanentErrorNotRetried(t *testing.T) {
 			io.WriteString(w, `<ListBucketResult><Contents><Key>gone.txt</Key><Size>5</Size></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`)
 			return
 		}
+		// Bucket-config probes (?policy, ?tagging) are absent here — return 404
+		// without counting them; this test is about OBJECT-GET retry behavior.
+		if _, ok := r.URL.Query()["policy"]; ok {
+			http.Error(w, "no policy", http.StatusNotFound)
+			return
+		}
+		if _, ok := r.URL.Query()["tagging"]; ok {
+			http.Error(w, "no tags", http.StatusNotFound)
+			return
+		}
 		mu.Lock()
 		gets++
 		mu.Unlock()
@@ -358,6 +368,9 @@ func TestMigrateCancel(t *testing.T) {
 			io.WriteString(w, sb.String())
 			return
 		}
+		if bucketMetaProbe(w, r) {
+			return
+		}
 		time.Sleep(5 * time.Millisecond) // slow each GET so cancel can interleave
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("x"))
@@ -406,6 +419,9 @@ func TestMigrateRejectsDuplicate(t *testing.T) {
 			}
 			sb.WriteString(`<IsTruncated>false</IsTruncated></ListBucketResult>`)
 			io.WriteString(w, sb.String())
+			return
+		}
+		if bucketMetaProbe(w, r) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -483,5 +499,74 @@ func TestMigratePreservesMetadata(t *testing.T) {
 		meta.CacheControl != "max-age=3600" || meta.ContentLanguage != "en" {
 		t.Errorf("content headers not preserved: type=%q enc=%q cache=%q lang=%q",
 			meta.ContentType, meta.ContentEncoding, meta.CacheControl, meta.ContentLanguage)
+	}
+}
+
+// bucketMetaProbe answers a ?policy / ?tagging request with 404 (absent) so
+// stubs that don't model bucket config aren't mistaken for serving one. Returns
+// true if it handled the request.
+func bucketMetaProbe(w http.ResponseWriter, r *http.Request) bool {
+	q := r.URL.Query()
+	if _, ok := q["policy"]; ok {
+		http.Error(w, "no policy", http.StatusNotFound)
+		return true
+	}
+	if _, ok := q["tagging"]; ok {
+		http.Error(w, "no tags", http.StatusNotFound)
+		return true
+	}
+	return false
+}
+
+// TestMigrateCopiesBucketPolicyAndTags verifies the IAM/policies half of a
+// migration: the source bucket's policy and tags are carried over (issue:
+// migrate IAM/policies). User/access-key migration is intentionally out of scope.
+func TestMigrateCopiesBucketPolicyAndTags(t *testing.T) {
+	const policyJSON = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::secured/*"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if _, ok := q["policy"]; ok {
+			io.WriteString(w, policyJSON)
+			return
+		}
+		if _, ok := q["tagging"]; ok {
+			w.Header().Set("Content-Type", "application/xml")
+			io.WriteString(w, `<Tagging><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag><Tag><Key>team</Key><Value>data</Value></Tag></TagSet></Tagging>`)
+			return
+		}
+		if q.Get("list-type") == "2" {
+			w.Header().Set("Content-Type", "application/xml")
+			io.WriteString(w, `<ListBucketResult><Contents><Key>file.txt</Key><Size>3</Size></Contents><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		io.WriteString(w, "abc")
+	}))
+	defer srv.Close()
+
+	store, eng := newLocal(t)
+	m := NewManager(store, eng)
+	id, err := m.Start(StartConfig{Endpoint: srv.URL, AccessKey: "k", SecretKey: "s", Buckets: []string{"secured"}})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	job := waitDone(t, m, id)
+	if job.Status != "completed" || job.Copied != 1 {
+		t.Fatalf("status=%s copied=%d err=%s", job.Status, job.Copied, job.Error)
+	}
+	if job.Policies != 1 {
+		t.Fatalf("Policies = %d, want 1", job.Policies)
+	}
+
+	gotPolicy, err := store.GetBucketPolicy("secured")
+	if err != nil || string(gotPolicy) != policyJSON {
+		t.Fatalf("bucket policy not migrated: err=%v got=%s", err, gotPolicy)
+	}
+	tags, err := store.GetBucketTags("secured")
+	if err != nil {
+		t.Fatalf("GetBucketTags: %v", err)
+	}
+	if tags["env"] != "prod" || tags["team"] != "data" {
+		t.Fatalf("bucket tags not migrated, got %v", tags)
 	}
 }

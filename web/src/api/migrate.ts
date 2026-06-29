@@ -8,6 +8,7 @@ export interface MigrateJob {
   total: number
   copied: number
   failed: number
+  policies: number
   error?: string
   started_at: number
   finished_at?: number

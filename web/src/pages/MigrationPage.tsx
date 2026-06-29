@@ -204,7 +204,7 @@ export default function MigrationPage() {
                     <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>{job.copied} copied{job.failed > 0 ? ` · ${job.failed} failed` : ''}{job.total > 0 ? ` / ${job.total}` : ''}</span>
+                    <span>{job.copied} copied{job.failed > 0 ? ` · ${job.failed} failed` : ''}{job.total > 0 ? ` / ${job.total}` : ''}{job.policies > 0 ? ` · ${job.policies} ${job.policies === 1 ? 'policy' : 'policies'}` : ''}</span>
                     <span>{job.buckets.length} bucket{job.buckets.length !== 1 ? 's' : ''}</span>
                   </div>
                   {job.error && <div className="mt-1.5 text-xs text-red-500">{job.error}</div>}

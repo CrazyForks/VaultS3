@@ -6,6 +6,32 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.2.20] - 2026-06-29
+### Security
+- **Rebuilt on the patched Go 1.26.3 toolchain and updated `golang.org/x/*`
+  dependencies to clear standard-library and dependency CVEs in the published
+  Docker image.** The image was being built with an outdated Go 1.25.x toolchain
+  (a stale `golang:1.25-alpine` base served from the CI build cache), which
+  `govulncheck` flagged for 14 reachable stdlib vulnerabilities plus 2 in
+  `golang.org/x/net`. Bumped the builder to `golang:1.26-alpine`, the CI/release
+  Go to 1.26, `go.mod` to `go 1.26.0` (`toolchain go1.26.3`), and
+  `x/net`→v0.56.0 / `x/crypto`→v0.53.0 / `x/text`→v0.38.0 / `x/sys`→v0.46.0.
+  Reachable vulnerabilities drop from 16 to 2 (the last two are fixed only in the
+  not-yet-released Go 1.26.4 and will clear automatically on the next rebuild).
+  No application code changed.
+
+### Added
+- **S3 migration now carries over bucket policies and tags (IAM/policies
+  migration).** Previously migration copied only buckets and objects; the access
+  policy and tag set on each source bucket were left behind. Migration now fetches
+  the source bucket's policy (`GET /{bucket}?policy`) and tags
+  (`GET /{bucket}?tagging`) and applies them locally, so access control survives
+  the move. Best-effort and standard-S3 — works against MinIO, AWS S3, Garage, or
+  any S3-compatible source; a bucket with no policy/tags (404) is not an error.
+  The migration job now reports a `policies` count, surfaced in the dashboard.
+  User/access-key migration is intentionally out of scope (it relies on each
+  vendor's proprietary admin API, not the portable S3 API).
+
 ## [4.2.19] - 2026-06-29
 ### Fixed
 - **S3 migration now preserves each object's original metadata instead of
@@ -308,7 +334,8 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.19...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.20...HEAD
+[4.2.20]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.19...v4.2.20
 [4.2.19]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.18...v4.2.19
 [4.2.18]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.17...v4.2.18
 [4.2.17]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.16...v4.2.17

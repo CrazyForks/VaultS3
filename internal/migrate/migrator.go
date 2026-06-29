@@ -62,6 +62,7 @@ type Job struct {
 	Total      int      `json:"total"`
 	Copied     int      `json:"copied"`
 	Failed     int      `json:"failed"`
+	Policies   int      `json:"policies"` // bucket policies carried over from the source
 	Error      string   `json:"error,omitempty"`
 	StartedAt  int64    `json:"started_at"`
 	FinishedAt int64    `json:"finished_at,omitempty"`
@@ -196,6 +197,11 @@ func (m *Manager) run(ctx context.Context, src *Source, job *Job) {
 		}
 		m.engine.CreateBucketDir(bucket)
 
+		// Carry over the bucket's access policy and tags before the objects. This
+		// is the IAM/policies half of a migration; user/access-key migration is
+		// source-specific (MinIO admin API) and intentionally out of scope.
+		m.migrateBucketMeta(src, bucket, job)
+
 		token := ""
 		for {
 			var objs []ObjectInfo
@@ -237,6 +243,31 @@ func (m *Manager) run(ctx context.Context, src *Source, job *Job) {
 		j.FinishedAt = time.Now().Unix()
 	})
 	slog.Info("migrate: completed", "id", job.ID, "copied", job.Copied, "failed", job.Failed)
+}
+
+// migrateBucketMeta copies the source bucket's policy and tags to the local
+// store. Best-effort: a source that doesn't expose these endpoints, or a bucket
+// with none, is not a migration failure — object data is what matters.
+func (m *Manager) migrateBucketMeta(src *Source, bucket string, job *Job) {
+	if policy, err := src.GetBucketPolicy(bucket); err != nil {
+		slog.Warn("migrate: bucket policy fetch failed", "bucket", bucket, "error", err)
+	} else if len(policy) > 0 {
+		if err := m.store.PutBucketPolicy(bucket, policy); err != nil {
+			slog.Warn("migrate: apply bucket policy failed", "bucket", bucket, "error", err)
+		} else {
+			m.bump(job, func(j *Job) { j.Policies++ })
+			slog.Info("migrate: bucket policy migrated", "bucket", bucket)
+		}
+	}
+	if tags, err := src.GetBucketTagging(bucket); err != nil {
+		slog.Warn("migrate: bucket tagging fetch failed", "bucket", bucket, "error", err)
+	} else if len(tags) > 0 {
+		if err := m.store.PutBucketTags(bucket, tags); err != nil {
+			slog.Warn("migrate: apply bucket tags failed", "bucket", bucket, "error", err)
+		} else {
+			slog.Info("migrate: bucket tags migrated", "bucket", bucket, "count", len(tags))
+		}
+	}
 }
 
 func (m *Manager) copyOne(src *Source, bucket string, o ObjectInfo) error {

@@ -5,10 +5,12 @@
 package migrate
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -197,6 +199,72 @@ func (s *Source) GetObject(bucket, key string) (*ObjectData, error) {
 		CacheControl:       resp.Header.Get("Cache-Control"),
 		ContentLanguage:    resp.Header.Get("Content-Language"),
 	}, nil
+}
+
+// isAbsent reports whether err means "the source has no such config" (HTTP 404,
+// e.g. NoSuchBucketPolicy / NoSuchTagSet) — which is normal, not a failure.
+func isAbsent(err error) bool {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.StatusCode == http.StatusNotFound
+	}
+	return false
+}
+
+// GetBucketPolicy fetches the source bucket's policy document (JSON). Returns
+// (nil, nil) when the bucket has no policy attached.
+func (s *Source) GetBucketPolicy(bucket string) ([]byte, error) {
+	body, err := s.get(fmt.Sprintf("%s/%s?policy", s.endpoint, url.PathEscape(bucket)))
+	if err != nil {
+		if isAbsent(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(io.LimitReader(body, 1<<20)) // policies are small
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
+	}
+	return data, nil
+}
+
+type sourceTagging struct {
+	TagSet struct {
+		Tags []struct {
+			Key   string `xml:"Key"`
+			Value string `xml:"Value"`
+		} `xml:"Tag"`
+	} `xml:"TagSet"`
+}
+
+// GetBucketTagging fetches the source bucket's tag set. Returns (nil, nil) when
+// the bucket has no tags.
+func (s *Source) GetBucketTagging(bucket string) (map[string]string, error) {
+	body, err := s.get(fmt.Sprintf("%s/%s?tagging", s.endpoint, url.PathEscape(bucket)))
+	if err != nil {
+		if isAbsent(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer body.Close()
+	data, _ := io.ReadAll(io.LimitReader(body, 1<<20))
+	var t sourceTagging
+	if err := xml.Unmarshal(data, &t); err != nil {
+		return nil, fmt.Errorf("parse bucket tagging: %w", err)
+	}
+	if len(t.TagSet.Tags) == 0 {
+		return nil, nil
+	}
+	tags := make(map[string]string, len(t.TagSet.Tags))
+	for _, tag := range t.TagSet.Tags {
+		tags[tag.Key] = tag.Value
+	}
+	return tags, nil
 }
 
 // httpError carries the HTTP status so the migrator can distinguish transient
