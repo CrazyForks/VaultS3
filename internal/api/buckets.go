@@ -44,7 +44,7 @@ func (h *APIHandler) handleListBuckets(w http.ResponseWriter, _ *http.Request) {
 
 	items := make([]bucketListItem, 0, len(buckets))
 	for _, b := range buckets {
-		size, count, _ := h.engine.BucketSize(b.Name)
+		size, count := h.bucketStatCounter(b.Name)
 		items = append(items, bucketListItem{
 			Name:         b.Name,
 			CreatedAt:    b.CreatedAt,
@@ -108,7 +108,7 @@ func (h *APIHandler) handleGetBucket(w http.ResponseWriter, _ *http.Request, nam
 		return
 	}
 
-	size, count, _ := h.engine.BucketSize(name)
+	size, count := h.bucketStatCounter(name)
 	policyBytes, _ := h.store.GetBucketPolicy(name)
 
 	detail := bucketDetail{

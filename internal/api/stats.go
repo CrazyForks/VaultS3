@@ -4,7 +4,22 @@ import (
 	"net/http"
 	"runtime"
 	"time"
+
+	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 )
+
+// bucketStat returns a bucket's size + object count from the maintained counter,
+// backfilling it once (a single filesystem walk) the first time it is missing.
+// Keeps the stats/buckets/tco pages O(1) instead of walking every object on every
+// request — see issue #16 (1M objects → ~13s page loads).
+func (h *APIHandler) bucketStatCounter(bucket string) (size, count int64) {
+	if st, ok, _ := h.store.BucketStats(bucket); ok {
+		return st.Size, st.Count
+	}
+	size, count, _ = h.engine.BucketSize(bucket)
+	h.store.SetBucketStats(bucket, metadata.BucketStat{Size: size, Count: count})
+	return size, count
+}
 
 type bucketStat struct {
 	Name         string `json:"name"`
@@ -45,7 +60,7 @@ func (h *APIHandler) handleStats(w http.ResponseWriter, _ *http.Request) {
 	bucketStats := make([]bucketStat, 0, len(buckets))
 
 	for _, b := range buckets {
-		size, count, _ := h.engine.BucketSize(b.Name)
+		size, count := h.bucketStatCounter(b.Name)
 		totalSize += size
 		totalObjects += count
 		bucketStats = append(bucketStats, bucketStat{

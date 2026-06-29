@@ -6,6 +6,18 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.2.22] - 2026-06-30
+### Fixed
+- **Slow dashboard pages with large buckets (issue #16).** The Home/Buckets/Stats/
+  Cost pages computed storage + object count by walking the entire bucket on the
+  filesystem (`BucketSize` → `filepath.Walk`) on **every** request, so cost scaled
+  with object count — ~13s per page load at 1M objects (reproduced locally). They
+  now read **maintained per-bucket counters** kept in the metadata store and
+  updated incrementally on every write (put/overwrite/delete), so reads are O(1)
+  regardless of object count. Existing data is backfilled with a single one-time
+  walk on first load after upgrade, then never walked again. Measured: 12.8s →
+  **0.4ms** at 1M objects, counts exact.
+
 ## [4.2.21] - 2026-06-29
 ### Added
 - **Helm chart: Deployment mode + existing PVCs for backup/restore (issue #15).**

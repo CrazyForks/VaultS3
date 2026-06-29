@@ -112,6 +112,8 @@ type StoreAPI interface {
 	PutNotificationConfig(bucket string, cfg BucketNotificationConfig) error
 	PutObjectMeta(meta ObjectMeta) error
 	PutObjectVersion(meta ObjectMeta) error
+	BucketStats(bucket string) (BucketStat, bool, error)
+	SetBucketStats(bucket string, stat BucketStat) error
 	PutPart(uploadID string, part PartInfo) error
 	PutPublicAccessBlock(bucket string, cfg PublicAccessBlockConfig) error
 	PutReplicationConfig(bucket, data string) error

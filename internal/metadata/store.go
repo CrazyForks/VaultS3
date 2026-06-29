@@ -40,6 +40,7 @@ var (
 	changeLogBucket         = []byte("change_log")
 	replicationConfigBucket = []byte("replication_configs")
 	serverSettingsBucket    = []byte("server_settings")
+	bucketStatsBucket       = []byte("bucket_stats")
 )
 
 type Store struct {
@@ -357,6 +358,9 @@ func NewStore(path string) (*Store, error) {
 		if _, err := tx.CreateBucketIfNotExists(serverSettingsBucket); err != nil {
 			return err
 		}
+		if _, err := tx.CreateBucketIfNotExists(bucketStatsBucket); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -393,6 +397,9 @@ func (s *Store) DeleteBucket(name string) error {
 		b := tx.Bucket(bucketsBucket)
 		if b.Get([]byte(name)) == nil {
 			return fmt.Errorf("bucket not found: %s", name)
+		}
+		if sb := tx.Bucket(bucketStatsBucket); sb != nil {
+			sb.Delete([]byte(name))
 		}
 		return b.Delete([]byte(name))
 	})
@@ -592,11 +599,19 @@ func objectMetaKey(bucket, key string) []byte {
 func (s *Store) PutObjectMeta(meta ObjectMeta) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(objectsBucket)
+		key := objectMetaKey(meta.Bucket, meta.Key)
+		// Read the prior meta (if any) so we can adjust the cached bucket
+		// counters by the delta rather than re-walking the filesystem.
+		oSize, oCount := metaWeight(getObjectMetaTx(b, key))
 		data, err := json.Marshal(meta)
 		if err != nil {
 			return err
 		}
-		return b.Put(objectMetaKey(meta.Bucket, meta.Key), data)
+		if err := b.Put(key, data); err != nil {
+			return err
+		}
+		nSize, nCount := metaWeight(&meta)
+		return adjustBucketStatsTx(tx, meta.Bucket, nSize-oSize, nCount-oCount)
 	})
 }
 
@@ -617,7 +632,109 @@ func (s *Store) GetObjectMeta(bucket, key string) (*ObjectMeta, error) {
 func (s *Store) DeleteObjectMeta(bucket, key string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(objectsBucket)
-		return b.Delete(objectMetaKey(bucket, key))
+		k := objectMetaKey(bucket, key)
+		oSize, oCount := metaWeight(getObjectMetaTx(b, k))
+		if err := b.Delete(k); err != nil {
+			return err
+		}
+		return adjustBucketStatsTx(tx, bucket, -oSize, -oCount)
+	})
+}
+
+// BucketStat is a cached per-bucket size + object count, maintained incrementally
+// on writes so the dashboard never has to walk the filesystem.
+type BucketStat struct {
+	Size  int64 `json:"size"`
+	Count int64 `json:"count"`
+}
+
+// metaWeight is an object's contribution to its bucket's counters. Delete markers
+// (and missing objects) contribute nothing.
+func metaWeight(m *ObjectMeta) (size, count int64) {
+	if m == nil || m.DeleteMarker {
+		return 0, 0
+	}
+	return m.Size, 1
+}
+
+func getObjectMetaTx(b *bolt.Bucket, key []byte) *ObjectMeta {
+	data := b.Get(key)
+	if data == nil {
+		return nil
+	}
+	m := &ObjectMeta{}
+	if json.Unmarshal(data, m) != nil {
+		return nil
+	}
+	return m
+}
+
+// adjustBucketStatsTx applies a delta to a bucket's cached counters — but only
+// once a baseline exists (set by SetBucketStats during the one-time backfill).
+// Before backfill there is no entry, so deltas are skipped and the first read
+// computes the true total via a single walk; afterwards every write is O(1).
+func adjustBucketStatsTx(tx *bolt.Tx, bucket string, dSize, dCount int64) error {
+	if dSize == 0 && dCount == 0 {
+		return nil
+	}
+	sb := tx.Bucket(bucketStatsBucket)
+	if sb == nil {
+		return nil
+	}
+	data := sb.Get([]byte(bucket))
+	if data == nil {
+		return nil // no baseline yet; backfill will seed it
+	}
+	var st BucketStat
+	if json.Unmarshal(data, &st) != nil {
+		return nil
+	}
+	st.Size += dSize
+	st.Count += dCount
+	if st.Size < 0 {
+		st.Size = 0
+	}
+	if st.Count < 0 {
+		st.Count = 0
+	}
+	out, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return sb.Put([]byte(bucket), out)
+}
+
+// BucketStats returns the cached counters for a bucket. found=false means it has
+// not been backfilled yet (the caller should compute + SetBucketStats once).
+func (s *Store) BucketStats(bucket string) (stat BucketStat, found bool, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error {
+		sb := tx.Bucket(bucketStatsBucket)
+		if sb == nil {
+			return nil
+		}
+		data := sb.Get([]byte(bucket))
+		if data == nil {
+			return nil
+		}
+		found = true
+		return json.Unmarshal(data, &stat)
+	})
+	return stat, found, err
+}
+
+// SetBucketStats stores the absolute counters for a bucket (used by the one-time
+// backfill that seeds the baseline from a filesystem walk).
+func (s *Store) SetBucketStats(bucket string, stat BucketStat) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		sb := tx.Bucket(bucketStatsBucket)
+		if sb == nil {
+			return nil
+		}
+		data, err := json.Marshal(stat)
+		if err != nil {
+			return err
+		}
+		return sb.Put([]byte(bucket), data)
 	})
 }
 
@@ -901,6 +1018,12 @@ func (s *Store) DeleteBucketObjectMeta(bucket string) error {
 		for k, _ := c.Seek(prefix); k != nil && len(k) >= len(prefix) && string(k[:len(prefix)]) == string(prefix); k, _ = c.Next() {
 			if err := b.Delete(k); err != nil {
 				return err
+			}
+		}
+		// All objects gone → reset the cached counters to zero.
+		if sb := tx.Bucket(bucketStatsBucket); sb != nil {
+			if data, _ := json.Marshal(BucketStat{}); data != nil {
+				sb.Put([]byte(bucket), data)
 			}
 		}
 		return nil

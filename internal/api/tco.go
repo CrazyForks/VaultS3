@@ -70,7 +70,7 @@ func (h *APIHandler) handleTCO(w http.ResponseWriter, r *http.Request) {
 	var storageBytes int64
 	buckets, _ := h.store.ListBuckets()
 	for _, b := range buckets {
-		size, _, _ := h.engine.BucketSize(b.Name)
+		size, _ := h.bucketStatCounter(b.Name)
 		storageBytes += size
 	}
 
