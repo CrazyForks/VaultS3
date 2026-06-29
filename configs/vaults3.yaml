@@ -85,6 +85,10 @@ notifications:
     index: "s3-events"
 
 replication:
+  # Enable only on the SOURCE for one-way "push". The TARGET does not need
+  # replication enabled — it just needs the peer's access_key/secret_key below to
+  # be valid IAM credentials on it. Writes via BOTH the S3 API and the web
+  # dashboard are replicated. For "active-active", enable on both sites.
   enabled: false
   mode: "push"             # "push" (one-way) or "active-active" (bidirectional)
   site_id: "site-1"        # unique site ID for active-active mode

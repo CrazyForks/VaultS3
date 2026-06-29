@@ -148,6 +148,9 @@ func (h *APIHandler) handleDeleteObject(w http.ResponseWriter, _ *http.Request, 
 		}
 		h.store.PutObjectVersion(dm)
 		h.store.PutObjectMeta(dm)
+		if h.onReplication != nil {
+			h.onReplication("s3:ObjectRemoved:Delete", bucket, key, 0, "", dm.VersionID)
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -158,6 +161,9 @@ func (h *APIHandler) handleDeleteObject(w http.ResponseWriter, _ *http.Request, 
 		return
 	}
 	h.store.DeleteObjectMeta(bucket, key)
+	if h.onReplication != nil {
+		h.onReplication("s3:ObjectRemoved:Delete", bucket, key, 0, "", "")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -271,6 +277,9 @@ func (h *APIHandler) handleUpload(w http.ResponseWriter, r *http.Request, bucket
 				}
 				h.store.PutObjectVersion(meta)
 				h.store.PutObjectMeta(meta)
+				if h.onReplication != nil {
+					h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, versionID)
+				}
 			} else {
 				written, etag, err = h.engine.PutObject(bucket, key, file, fh.Size)
 				file.Close()
@@ -280,6 +289,9 @@ func (h *APIHandler) handleUpload(w http.ResponseWriter, r *http.Request, bucket
 				h.store.PutObjectMeta(metadata.ObjectMeta{
 					Bucket: bucket, Key: key, ContentType: ct, ETag: etag, Size: written, LastModified: now,
 				})
+				if h.onReplication != nil {
+					h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, "")
+				}
 			}
 
 			results = append(results, uploadResult{
@@ -336,6 +348,9 @@ func (h *APIHandler) handleBulkDelete(w http.ResponseWriter, r *http.Request, bu
 			continue
 		}
 		h.store.DeleteObjectMeta(bucket, key)
+		if h.onReplication != nil {
+			h.onReplication("s3:ObjectRemoved:Delete", bucket, key, 0, "", "")
+		}
 		results = append(results, deleteResult{Key: key, Deleted: true})
 	}
 

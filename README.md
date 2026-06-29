@@ -911,12 +911,14 @@ replication:
   batch_size: 100          # events per scan cycle
 ```
 
-Objects PUT, copied, or deleted on the primary are asynchronously replicated to all configured peers via S3 API. Buckets are auto-created on peers. Failed deliveries retry with exponential backoff (5s, 15s, 45s, 135s, 405s). The `X-VaultS3-Replication` header prevents infinite loops. Monitor via dashboard API:
+Objects created, copied, or deleted on the primary — whether through the S3 API **or the web dashboard** — are asynchronously pushed to all configured peers over the S3 protocol. Buckets are auto-created on peers. Failed deliveries retry with exponential backoff (5s, 15s, 45s, 135s, 405s). The `X-VaultS3-Replication` header prevents infinite loops. Monitor via dashboard API:
 
 ```bash
 curl http://localhost:9000/api/v1/replication/status   # per-peer sync stats
 curl http://localhost:9000/api/v1/replication/queue     # pending queue entries
 ```
+
+For one-way push, replication only needs to be enabled on the **source**. The **target** does not need `replication.enabled` — it just needs the peer `access_key`/`secret_key` (from the source's config) to be valid credentials on it. Enable replication on both sides only for `mode: active-active`.
 
 ### CLI Tool
 

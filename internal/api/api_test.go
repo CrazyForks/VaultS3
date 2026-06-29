@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -372,5 +373,44 @@ func TestReplicationStatusListsConfiguredPeers(t *testing.T) {
 	}
 	if len(resp.Peers) != 1 || resp.Peers[0].Name != "racknerd" || resp.Peers[0].URL != "https://s3.target.example.com" {
 		t.Fatalf("configured peer should be listed even with no status records, got %+v", resp.Peers)
+	}
+}
+
+// Dashboard uploads/deletes must enqueue replication just like the S3 API path —
+// otherwise objects added through the web UI never sync to peers (issue #10).
+func TestDashboardMutationsTriggerReplication(t *testing.T) {
+	h, store := newTestAPI(t)
+	store.CreateBucket("repl-bucket")
+
+	var events []string
+	h.SetReplicationFunc(func(eventType, bucket, key string, size int64, etag, versionID string) {
+		events = append(events, eventType+" "+bucket+"/"+key)
+	})
+
+	// Upload via the dashboard multipart endpoint.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "hello.txt")
+	fw.Write([]byte("payload"))
+	mw.Close()
+	req := httptest.NewRequest("POST", "/api/v1/buckets/repl-bucket/objects", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rr := httptest.NewRecorder()
+	h.handleUpload(rr, req, "repl-bucket")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Delete it via the dashboard endpoint.
+	rr = httptest.NewRecorder()
+	h.handleDeleteObject(rr, httptest.NewRequest("DELETE", "/x", nil), "repl-bucket", "hello.txt")
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete status: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	if len(events) != 2 ||
+		events[0] != "s3:ObjectCreated:Put repl-bucket/hello.txt" ||
+		events[1] != "s3:ObjectRemoved:Delete repl-bucket/hello.txt" {
+		t.Fatalf("dashboard mutations should replicate, got %v", events)
 	}
 }

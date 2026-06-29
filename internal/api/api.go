@@ -49,7 +49,13 @@ type APIHandler struct {
 	logBroadcaster   *LogBroadcaster
 	traceBroadcaster *TraceBroadcaster
 	s3Auth           *s3auth.Authenticator
+	onReplication    ReplicationFunc
 }
+
+// ReplicationFunc is called after a dashboard-initiated object mutation so the
+// write is replicated to peers, mirroring the S3 API path. Without this, objects
+// uploaded or deleted through the web UI never enqueue replication events.
+type ReplicationFunc func(eventType, bucket, key string, size int64, etag, versionID string)
 
 func NewAPIHandler(store *metadata.Store, engine storage.Engine, mc *metrics.Collector, cfg *config.Config, activity *ActivityLog) *APIHandler {
 	return &APIHandler{
@@ -60,6 +66,12 @@ func NewAPIHandler(store *metadata.Store, engine storage.Engine, mc *metrics.Col
 		jwt:      NewJWTService(cfg.Auth.AdminSecretKey),
 		activity: activity,
 	}
+}
+
+// SetReplicationFunc wires the replication enqueue callback so dashboard uploads
+// and deletes replicate to peers just like writes via the S3 API.
+func (h *APIHandler) SetReplicationFunc(fn ReplicationFunc) {
+	h.onReplication = fn
 }
 
 // SetSearchIndex sets the search index for the API handler.

@@ -57,6 +57,7 @@ type Server struct {
 	notifyDisp      *notify.Dispatcher
 	replWorker      *replication.Worker
 	biDirWorker     *replication.BiDirectionalWorker
+	replicationFunc func(eventType, bucket, key string, size int64, etag, versionID string)
 	searchIndex     *search.Index
 	vectorMgr       *vector.Manager
 	scanWorker      *scanner.Scanner
@@ -409,6 +410,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// Initialize replication worker if enabled
 	var replWorker *replication.Worker
 	var biDirWorker *replication.BiDirectionalWorker
+	// Shared so both the S3 handler and the dashboard API handler enqueue
+	// replication events — dashboard uploads/deletes must replicate too (issue #10).
+	var replicationFunc func(eventType, bucket, key string, size int64, etag, versionID string)
 	if cfg.Replication.Enabled && len(cfg.Replication.Peers) > 0 {
 		// Register peer access keys so replication header is only trusted from peers
 		var peerKeys []string
@@ -422,7 +426,7 @@ func New(cfg *config.Config) (*Server, error) {
 			biDirWorker = replication.NewBiDirectionalWorker(store, engine, cfg.Replication)
 			changeLog := biDirWorker.ChangeLog()
 			siteID := biDirWorker.SiteID()
-			s3h.SetReplicationFunc(func(eventType, bucket, key string, size int64, etag, versionID string) {
+			replicationFunc = func(eventType, bucket, key string, size int64, etag, versionID string) {
 				evtType := "put"
 				if eventType == "s3:ObjectRemoved:Delete" {
 					evtType = "delete"
@@ -438,7 +442,7 @@ func New(cfg *config.Config) (*Server, error) {
 					store.PutObjectMeta(*meta)
 				}
 				changeLog.Record(bucket, key, evtType, etag, size, vc)
-			})
+			}
 			slog.Info("active-active replication enabled",
 				"site_id", siteID,
 				"peers", len(cfg.Replication.Peers),
@@ -447,7 +451,7 @@ func New(cfg *config.Config) (*Server, error) {
 		} else {
 			// Traditional push-based replication
 			replWorker = replication.NewWorker(store, engine, cfg.Replication)
-			s3h.SetReplicationFunc(func(eventType, bucket, key string, size int64, etag, versionID string) {
+			replicationFunc = func(eventType, bucket, key string, size int64, etag, versionID string) {
 				evtType := "put"
 				if eventType == "s3:ObjectRemoved:Delete" {
 					evtType = "delete"
@@ -462,9 +466,10 @@ func New(cfg *config.Config) (*Server, error) {
 						Size:   size,
 					})
 				}
-			})
+			}
 			slog.Info("push replication enabled", "peers", len(cfg.Replication.Peers), "interval_secs", cfg.Replication.ScanIntervalSecs)
 		}
+		s3h.SetReplicationFunc(replicationFunc)
 	}
 
 	// Build search index
@@ -573,6 +578,7 @@ func New(cfg *config.Config) (*Server, error) {
 		notifyDisp:      notifyDispatcher,
 		replWorker:      replWorker,
 		biDirWorker:     biDirWorker,
+		replicationFunc: replicationFunc,
 		searchIndex:     searchIdx,
 		vectorMgr:       vectorMgr,
 		scanWorker:      scanWorker,
@@ -602,6 +608,9 @@ func (s *Server) Run() error {
 	apiHandler.SetSearchIndex(s.searchIndex)
 	apiHandler.SetMigrator(migrate.NewManager(s.store, s.engine))
 	apiHandler.SetSnapshotManager(snapshot.NewManager(s.store))
+	if s.replicationFunc != nil {
+		apiHandler.SetReplicationFunc(s.replicationFunc)
+	}
 
 	// Update checker (notifier always; auto-apply only if explicitly enabled).
 	updater := selfupdate.New(Version)

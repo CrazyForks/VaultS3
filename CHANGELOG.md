@@ -6,6 +6,18 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.2.17] - 2026-06-29
+### Fixed
+- **Objects uploaded or deleted through the web dashboard were never replicated
+  to peers (issues #10, #11).** Only writes via the S3 API enqueued
+  replication events; the dashboard upload/delete handlers did not, so a user who
+  added files through the UI saw `last synced: never` and zero objects on the
+  target. The dashboard mutation paths (upload, single delete, bulk delete) now
+  enqueue replication events through the same callback as the S3 API, for both
+  push and active-active modes. Note: this also means the **target instance does
+  not need replication enabled** — one-way push only requires replication on the
+  source plus valid peer credentials on the target.
+
 ## [4.2.16] - 2026-06-29
 ### Fixed
 - **Replication dashboard showed "No replication peers configured" despite peers
@@ -269,7 +281,8 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.16...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.17...HEAD
+[4.2.17]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.16...v4.2.17
 [4.2.16]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.15...v4.2.16
 [4.2.15]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.12...v4.2.15
 [4.2.12]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.11...v4.2.12
