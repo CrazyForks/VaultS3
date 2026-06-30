@@ -18,16 +18,16 @@ type settingsResponse struct {
 		MetadataDir string `json:"metadataDir"`
 	} `json:"storage"`
 	Features struct {
-		Encryption  bool `json:"encryption"`
-		Compression bool `json:"compression"`
-		AccessLog   bool `json:"accessLog"`
-		RateLimit   bool `json:"rateLimit"`
-		Replication bool `json:"replication"`
-		Scanner     bool `json:"scanner"`
-		Tiering     bool `json:"tiering"`
-		Backup      bool `json:"backup"`
-		OIDC        bool `json:"oidc"`
-		Lambda      bool `json:"lambda"`
+		Encryption          bool `json:"encryption"`
+		Compression         bool `json:"compression"`
+		AccessLog           bool `json:"accessLog"`
+		RateLimit           bool `json:"rateLimit"`
+		Replication         bool `json:"replication"`
+		Scanner             bool `json:"scanner"`
+		Tiering             bool `json:"tiering"`
+		Backup              bool `json:"backup"`
+		OIDC                bool `json:"oidc"`
+		Lambda              bool `json:"lambda"`
 		Vector              bool `json:"vector"`
 		Erasure             bool `json:"erasure"`
 		Cluster             bool `json:"cluster"`
