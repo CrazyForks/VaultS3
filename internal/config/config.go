@@ -253,6 +253,11 @@ type ServerConfig struct {
 	TLS                 TLSConfig `yaml:"tls"`
 	InterNodeAddress    string    `yaml:"internode_address"` // separate bind address for inter-node traffic
 	InterNodePort       int       `yaml:"internode_port"`    // separate port for inter-node traffic
+	// ConsolePort, when set, serves the dashboard (Web UI) + its API on a separate
+	// port from the S3 API — so each can have its own network rules / TLS / proxy
+	// (MinIO-style). 0 = serve everything on Port. See issue #18.
+	ConsoleAddress string `yaml:"console_address"`
+	ConsolePort    int    `yaml:"console_port"`
 }
 
 type TLSConfig struct {
@@ -450,6 +455,14 @@ func applyEnvOverrides(cfg *Config) {
 		if p, err := strconv.Atoi(v); err == nil {
 			cfg.Server.Port = p
 		}
+	}
+	if v := os.Getenv("VAULTS3_CONSOLE_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Server.ConsolePort = p
+		}
+	}
+	if v := os.Getenv("VAULTS3_CONSOLE_ADDRESS"); v != "" {
+		cfg.Server.ConsoleAddress = v
 	}
 	if v := os.Getenv("VAULTS3_ADDRESS"); v != "" {
 		cfg.Server.Address = v

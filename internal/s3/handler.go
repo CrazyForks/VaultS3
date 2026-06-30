@@ -307,6 +307,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Decode an aws-chunked (streaming) request body, if present, before any
+	// handler reads it. Must run after auth (which signs the STREAMING-* literal,
+	// not the body). Without this, HTTPS/HTTP-2 uploads from modern SDKs are stored
+	// with their chunk framing intact and corrupted.
+	maybeDecodeAwsChunked(r)
+
 	// Replication loop prevention: use a per-request ObjectHandler copy with
 	// notification/replication/lambda callbacks disabled for replication peers.
 	// This avoids mutating shared state from concurrent goroutines.

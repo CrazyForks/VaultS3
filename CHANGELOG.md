@@ -5,6 +5,26 @@ All notable changes to VaultS3 are documented here. The format is based on
 semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
+### Fixed
+- **CRITICAL: `aws-chunked` (streaming) uploads were stored corrupted.** Modern AWS
+  SDKs (boto3/botocore 1.36+, aws-cli, aws-sdk-js v3) default to flexible checksums
+  and, when the transport supports it — notably **HTTP/2, which Go negotiates for
+  any TLS listener** — stream the body with `Content-Encoding: aws-chunked` and
+  `x-amz-content-sha256: STREAMING-…-PAYLOAD`. VaultS3 didn't decode that framing,
+  so the chunk-size headers + trailing checksum were written into the object itself
+  (a 100-byte PUT stored as 142 bytes). Net effect: **uploads over HTTPS from recent
+  SDKs were silently corrupted.** The request body is now de-chunked centrally
+  before any handler reads it (covers PutObject, multipart UploadPart, POST). SigV4
+  is unaffected (streaming modes sign the `STREAMING-…` literal, not the body).
+  Verified over HTTPS with boto3 (0 B–5 MB), aws-cli (incl. 60 MB multipart), and
+  boto3 multipart — all byte-for-byte; HTTP path unchanged.
+### Added
+- **Separate port for the Dashboard vs the S3 API (issue #18).** Set
+  `server.console_port` (e.g. `9001`) to serve the Web UI + its `/api/v1/` on a
+  dedicated listener, leaving the S3 API on `server.port` — so each can have its
+  own firewall rules, TLS, and reverse proxy (MinIO-style). Default `0` keeps
+  everything on one port (unchanged). Env: `VAULTS3_CONSOLE_PORT` /
+  `VAULTS3_CONSOLE_ADDRESS`.
 
 ## [4.3.0] - 2026-06-30
 ### Added

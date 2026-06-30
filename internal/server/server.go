@@ -734,15 +734,22 @@ func (s *Server) Run() error {
 		}
 	}
 
+	// When ConsolePort is set, the dashboard (Web UI) + its API move to a separate
+	// listener (issue #18) so the S3 API and the console can have independent ports,
+	// network rules, and TLS. Otherwise everything is served on the main port.
+	splitConsole := s.cfg.Server.ConsolePort > 0 && s.cfg.Server.ConsolePort != s.cfg.Server.Port
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/dashboard/favicon.svg", http.StatusMovedPermanently)
-	})
 	mux.HandleFunc("/health", healthHandler(s.metrics.StartTime()))
 	mux.HandleFunc("/ready", readyHandler(s.store))
-	mux.Handle("/api/v1/", apiHandler)
-	mux.Handle("/dashboard/", dashboard.Handler())
 	mux.Handle("/metrics", s.metrics)
+	if !splitConsole {
+		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/favicon.svg", http.StatusMovedPermanently)
+		})
+		mux.Handle("/api/v1/", apiHandler)
+		mux.Handle("/dashboard/", dashboard.Handler())
+	}
 
 	// Register pprof endpoints when debug mode is enabled
 	if s.cfg.Debug {
@@ -788,11 +795,19 @@ func (s *Server) Run() error {
 	if s.cfg.Server.TLS.Enabled {
 		scheme = "https"
 	}
+	dashURL := fmt.Sprintf("%s://%s/dashboard/", scheme, addr)
+	if splitConsole {
+		caddr := s.cfg.Server.ConsoleAddress
+		if caddr == "" {
+			caddr = s.cfg.Server.Address
+		}
+		dashURL = fmt.Sprintf("%s://%s:%d/dashboard/", scheme, caddr, s.cfg.Server.ConsolePort)
+	}
 	slog.Info("VaultS3 starting",
 		"addr", addr,
 		"data_dir", s.cfg.Storage.DataDir,
 		"metadata_dir", s.cfg.Storage.MetadataDir,
-		"dashboard", fmt.Sprintf("%s://%s/dashboard/", scheme, addr),
+		"dashboard", dashURL,
 	)
 	if s.cfg.Auth.AdminAccessKey == "vaults3-admin" || s.cfg.Auth.AdminSecretKey == "vaults3-secret-change-me" {
 		slog.Warn("Using default admin credentials. Set VAULTS3_ACCESS_KEY and VAULTS3_SECRET_KEY environment variables.")
@@ -938,6 +953,43 @@ func (s *Server) Run() error {
 		}()
 	}
 
+	// Start the separate console (dashboard) listener if configured (issue #18).
+	var consoleServer *http.Server
+	if splitConsole {
+		caddr := s.cfg.Server.ConsoleAddress
+		if caddr == "" {
+			caddr = s.cfg.Server.Address
+		}
+		consoleAddr := fmt.Sprintf("%s:%d", caddr, s.cfg.Server.ConsolePort)
+		cmux := http.NewServeMux()
+		cmux.HandleFunc("/health", healthHandler(s.metrics.StartTime()))
+		cmux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/favicon.svg", http.StatusMovedPermanently)
+		})
+		cmux.Handle("/api/v1/", apiHandler)
+		cmux.Handle("/dashboard/", dashboard.Handler())
+		cmux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/", http.StatusFound)
+		})
+		var chandler http.Handler = cmux
+		chandler = middleware.RequestID(chandler)
+		chandler = middleware.SecurityHeaders(chandler)
+		chandler = middleware.PanicRecovery(chandler)
+		consoleServer = &http.Server{Addr: consoleAddr, Handler: chandler}
+		go func() {
+			slog.Info("console (dashboard) listener started", "addr", consoleAddr)
+			var err error
+			if s.cfg.Server.TLS.Enabled {
+				err = consoleServer.ListenAndServeTLS(s.cfg.Server.TLS.CertFile, s.cfg.Server.TLS.KeyFile)
+			} else {
+				err = consoleServer.ListenAndServe()
+			}
+			if err != nil && err != http.ErrServerClosed {
+				slog.Error("console listener error", "error", err)
+			}
+		}()
+	}
+
 	// Start server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
@@ -966,6 +1018,9 @@ func (s *Server) Run() error {
 
 	if interNodeServer != nil {
 		interNodeServer.Shutdown(ctx)
+	}
+	if consoleServer != nil {
+		consoleServer.Shutdown(ctx)
 	}
 	if err := httpServer.Shutdown(ctx); err != nil {
 		slog.Error("graceful shutdown timed out", "timeout", timeout, "error", err)

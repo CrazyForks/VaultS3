@@ -110,6 +110,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Health checks** — `/health` (liveness) and `/ready` (readiness) endpoints for load balancers and Kubernetes
 - **Graceful shutdown** — Drains in-flight requests on SIGTERM/SIGINT with configurable timeout
 - **TLS support** — Optional HTTPS with configurable cert/key paths
+- **Separate dashboard port** — Optionally serve the Web UI + its API on a dedicated port (`server.console_port`, e.g. 9001) apart from the S3 API, so each can have its own firewall rules / TLS / reverse proxy (MinIO-style)
 - **Object versioning** — Per-bucket versioning with version IDs, delete markers, version-specific GET/DELETE/HEAD
 - **Object locking (WORM)** — Legal hold and retention (GOVERNANCE/COMPLIANCE) to prevent deletion
 - **Lifecycle rules** — Per-bucket object expiration (auto-delete after N days) with background worker
