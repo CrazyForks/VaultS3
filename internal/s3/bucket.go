@@ -113,6 +113,14 @@ func (h *BucketHandler) CreateBucket(w http.ResponseWriter, r *http.Request, buc
 		return
 	}
 
+	// A bucket created with object lock enabled requires versioning, which AWS turns
+	// on automatically. Enable it and record the object-lock state so retention is
+	// stored on versions and GetObjectLockConfiguration reports the true state.
+	if strings.EqualFold(r.Header.Get("X-Amz-Bucket-Object-Lock-Enabled"), "true") {
+		h.store.SetBucketVersioning(bucket, "Enabled")
+		h.store.SetBucketObjectLockEnabled(bucket, true)
+	}
+
 	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
 }

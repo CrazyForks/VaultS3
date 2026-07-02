@@ -71,7 +71,13 @@ func (s *Scheduler) shouldRun() bool {
 }
 
 func (s *Scheduler) runBackup() {
-	s.running.Store(true)
+	// Claim the running flag atomically. The Load checks in shouldRun/TriggerBackup
+	// are only a fast path; this compare-and-swap is the real guard that prevents
+	// two concurrent triggers (or a trigger racing the ticker) from both starting a
+	// backup and writing the same target directory at once.
+	if !s.running.CompareAndSwap(false, true) {
+		return
+	}
 	defer s.running.Store(false)
 
 	for _, target := range s.cfg.Targets {

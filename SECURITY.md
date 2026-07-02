@@ -12,8 +12,8 @@
 
 Instead, please report them privately via one of these methods:
 
-1. **GitHub Security Advisories** — [Report a vulnerability](https://github.com/Kodiqa-Solutions/VaultS3/security/advisories/new) (preferred)
-2. **Email** — Send details to the repository owner
+1. **GitHub Security Advisories**, [Report a vulnerability](https://github.com/Kodiqa-Solutions/VaultS3/security/advisories/new) (preferred)
+2. **Email**, Send details to the repository owner
 
 ### What to Include
 
@@ -69,10 +69,10 @@ VaultS3 includes multiple security layers:
 - **Security headers** (CSP, X-Frame-Options, HSTS, X-Content-Type-Options, Referrer-Policy)
 - **CORS origin validation** (same-origin + localhost only)
 - **API rate limiting** (token bucket per RemoteAddr IP, not spoofable via X-Forwarded-For)
-- **Input validation** (DNS-compatible bucket names, object key length/null byte/path traversal checks — enforced on all S3, API, and versioning endpoints)
+- **Input validation** (DNS-compatible bucket names, object key length/null byte/path traversal checks, enforced on all S3, API, and versioning endpoints)
 - **Path traversal prevention** (rejects `..` segments in object keys at S3 handler, API, versioning API, CopyObject/UploadPartCopy source, and filesystem layers)
 - **SSRF protection** (webhook, notification, and lambda function URLs validated against localhost, private IPs, link-local, and cloud metadata endpoints)
-- **Upload size limits** (5GB per PUT object, 5GB per multipart part — enforced via `http.MaxBytesReader`)
+- **Upload size limits** (5GB per PUT object, 5GB per multipart part, enforced via `http.MaxBytesReader`)
 - **IP allowlist/blocklist** (global and per-user CIDR)
 - **Audit trail** with auto-pruning
 - **Object locking (WORM)** for compliance
@@ -101,18 +101,18 @@ VaultS3 includes multiple security layers:
 
 ## Deployment Best Practices
 
-- **Always change default credentials** — set `VAULTS3_ACCESS_KEY` and `VAULTS3_SECRET_KEY` environment variables
-- **Use HTTPS in production** — set `VAULTS3_TLS_CERT` and `VAULTS3_TLS_KEY`, or run behind a reverse proxy with TLS termination
+- **Always change default credentials**: set `VAULTS3_ACCESS_KEY` and `VAULTS3_SECRET_KEY` environment variables
+- **Use HTTPS in production**: set `VAULTS3_TLS_CERT` and `VAULTS3_TLS_KEY`, or run behind a reverse proxy with TLS termination
 - **Run behind a reverse proxy** (nginx, Caddy, Traefik) for additional rate limiting, IP filtering, and access logging
-- **Enable encryption at rest** — set `VAULTS3_ENCRYPTION_KEY` with a random 64-char hex key (`openssl rand -hex 32`)
-- **Restrict network access** — use firewall rules to limit who can reach port 9000 (and Raft port 9001 in cluster mode)
-- **Isolate Raft traffic** — bind the Raft port to a private network interface, never expose it publicly
-- **Secure replication peers** — use unique access keys per peer, rotate credentials regularly
-- **Monitor the audit trail** — review `/api/v1/audit` for suspicious activity
-- **Monitor cluster health** — check `/cluster/status` and `/health` endpoints for node failures
-- **Keep VaultS3 updated** — pull the latest Docker image regularly
-- **Use TLS for LDAP** — configure `ldaps://` or STARTTLS to protect LDAP bind credentials in transit
-- **Secure KMS configuration** — use HashiCorp Vault with AppRole or token auth; rotate master keys periodically; restrict Vault policy to minimum required paths
-- **Enable Auto-TLS in production** — configure Let's Encrypt with a valid domain; set `auto_tls.email` for certificate expiry notifications
-- **Separate inter-node traffic** — bind cluster and replication traffic to a dedicated private network interface using `cluster.bind_addr`
-- **Set bucket bandwidth limits** — configure per-bucket upload/download rate limits to prevent resource monopolization by a single tenant
+- **Enable encryption at rest**: set `VAULTS3_ENCRYPTION_KEY` with a random 64-char hex key (`openssl rand -hex 32`)
+- **Restrict network access**: use firewall rules to limit who can reach port 9000 (and Raft port 9001 in cluster mode)
+- **Isolate Raft traffic**: bind the Raft port to a private network interface, never expose it publicly
+- **Secure replication peers**: use unique access keys per peer, rotate credentials regularly
+- **Monitor the audit trail**: review `/api/v1/audit` for suspicious activity
+- **Monitor cluster health**: check `/cluster/status` and `/health` endpoints for node failures
+- **Keep VaultS3 updated**: pull the latest Docker image regularly
+- **Use TLS for LDAP**: configure `ldaps://` or STARTTLS to protect LDAP bind credentials in transit
+- **Secure KMS configuration**: use HashiCorp Vault with AppRole or token auth. Rotate master keys periodically. Restrict Vault policy to minimum required paths
+- **Enable Auto-TLS in production**: configure Let's Encrypt with a valid domain. Set `auto_tls.email` for certificate expiry notifications
+- **Separate inter-node traffic**: bind cluster and replication traffic to a dedicated private network interface using `cluster.bind_addr`
+- **Set bucket bandwidth limits**: configure per-bucket upload/download rate limits to prevent resource monopolization by a single tenant

@@ -1,13 +1,13 @@
 # VaultS3 Benchmarks
 
 This page describes **how to benchmark VaultS3** reproducibly and provides a
-results template. The numbers tables are intentionally left as placeholders —
+results template. The numbers tables are intentionally left as placeholders, 
 fill them in from a controlled run on your own hardware. **Do not cite numbers
 you haven't measured.** Throughput depends heavily on disk, CPU, network, object
 size, and concurrency, so a number without its methodology is meaningless.
 
 > If you run these and want to contribute results, open a PR adding a row with
-> your hardware spec — that's far more credible than vendor-claimed figures.
+> your hardware spec, that's far more credible than vendor-claimed figures.
 
 ---
 
@@ -15,7 +15,7 @@ size, and concurrency, so a number without its methodology is meaningless.
 
 VaultS3 ships a quick single-object drive benchmark. It writes then reads a 64 MB
 object through the storage engine and reports throughput. It measures **local
-disk + engine overhead only** — no network, no concurrency, no S3 protocol.
+disk + engine overhead only**, no network, no concurrency, no S3 protocol.
 
 ```bash
 # Get a dashboard JWT first (admin login), then:
@@ -32,7 +32,7 @@ curl -s -X POST http://localhost:9000/api/v1/speedtest \
 ```
 
 Use this for a fast "is my disk healthy?" check, **not** for comparisons against
-other systems — it doesn't exercise the S3 API path or concurrent clients.
+other systems, it doesn't exercise the S3 API path or concurrent clients.
 
 ---
 
@@ -58,7 +58,7 @@ warp mixed \
 Run the identical command against each system (only `--host`/keys change) and
 record the reported GET/PUT throughput and latency percentiles.
 
-`s3-bench` and `hyperfine`-wrapped `aws s3 cp` loops are reasonable alternatives;
+`s3-bench` and `hyperfine`-wrapped `aws s3 cp` loops are reasonable alternatives.
 the key is **same tool, same flags, same box** for every system under test.
 
 ---
@@ -104,6 +104,6 @@ methodology so the numbers are reproducible.
 
 - Always publish the **hardware, tool, flags, and date** alongside the numbers.
 - Run each system several times and report medians, not best-case cherry-picks.
-- If VaultS3 loses on a metric, say so — credibility compounds. The pitch is
+- If VaultS3 loses on a metric, say so, credibility compounds. The pitch is
   "lightweight and batteries-included in one binary," and RAM/footprint is where
   that shows. Raw peak throughput on big iron is not the claim.

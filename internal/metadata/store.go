@@ -78,6 +78,7 @@ type BucketInfo struct {
 	Versioning           string            `json:"versioning,omitempty"`             // "Enabled", "Suspended", or ""
 	DefaultRetentionMode string            `json:"default_retention_mode,omitempty"` // "GOVERNANCE" or "COMPLIANCE"
 	DefaultRetentionDays int               `json:"default_retention_days,omitempty"`
+	ObjectLockEnabled    bool              `json:"object_lock_enabled,omitempty"` // set at creation; requires versioning
 	Tags                 map[string]string `json:"tags,omitempty"`
 	FIFOQuota            bool              `json:"fifo_quota,omitempty"` // delete oldest objects to make room instead of rejecting
 }
@@ -710,6 +711,42 @@ func adjustBucketStatsTx(tx *bolt.Tx, bucket string, dSize, dCount int64) error 
 	return sb.Put([]byte(bucket), out)
 }
 
+// BackfillBucketStats computes a bucket's true size/count from the metadata index
+// (the latest-pointer entries in the objects bucket) and seeds the cached counter,
+// all in a single transaction so no concurrent write is lost between the walk and
+// the seed. This is correct for versioned, compressed, and encrypted buckets,
+// unlike an engine filesystem walk (which sees on-disk bytes and skips .vs/).
+func (s *Store) BackfillBucketStats(bucket string) (BucketStat, error) {
+	var st BucketStat
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		ob := tx.Bucket(objectsBucket)
+		if ob == nil {
+			return nil
+		}
+		bp := []byte(bucket + "/")
+		c := ob.Cursor()
+		for k, v := c.Seek(bp); k != nil && bytes.HasPrefix(k, bp); k, v = c.Next() {
+			var m ObjectMeta
+			if json.Unmarshal(v, &m) != nil || m.Bucket != bucket {
+				continue
+			}
+			sz, cnt := metaWeight(&m)
+			st.Size += sz
+			st.Count += cnt
+		}
+		sb, err := tx.CreateBucketIfNotExists(bucketStatsBucket)
+		if err != nil {
+			return err
+		}
+		out, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		return sb.Put([]byte(bucket), out)
+	})
+	return st, err
+}
+
 // BucketStats returns the cached counters for a bucket. found=false means it has
 // not been backfilled yet (the caller should compute + SetBucketStats once).
 func (s *Store) BucketStats(bucket string) (stat BucketStat, found bool, err error) {
@@ -1058,6 +1095,28 @@ func (s *Store) SetBucketVersioning(bucket, status string) error {
 	})
 }
 
+// SetBucketObjectLockEnabled marks a bucket as object-lock enabled. Object lock
+// requires versioning, so callers enable versioning alongside this.
+func (s *Store) SetBucketObjectLockEnabled(bucket string, enabled bool) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketsBucket)
+		data := b.Get([]byte(bucket))
+		if data == nil {
+			return fmt.Errorf("bucket not found: %s", bucket)
+		}
+		var info BucketInfo
+		if err := json.Unmarshal(data, &info); err != nil {
+			return err
+		}
+		info.ObjectLockEnabled = enabled
+		updated, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(bucket), updated)
+	})
+}
+
 // SetBucketDefaultRetention sets the default object retention for a bucket.
 func (s *Store) SetBucketDefaultRetention(bucket, mode string, days int) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -1350,7 +1409,20 @@ func (s *Store) SetLatestVersion(bucket, key, versionID string) error {
 			return fmt.Errorf("version not found")
 		}
 		ob := tx.Bucket(objectsBucket)
-		return ob.Put(objectMetaKey(bucket, key), data)
+		mk := objectMetaKey(bucket, key)
+		oSize, oCount := metaWeight(getObjectMetaTx(ob, mk))
+		if err := ob.Put(mk, data); err != nil {
+			return err
+		}
+		// Repointing the latest pointer changes the bucket's live size/count (e.g.
+		// promoting an older version or un-deleting on version delete), so adjust
+		// the cached counters by the delta, like PutObjectMeta does.
+		var nm ObjectMeta
+		if json.Unmarshal(data, &nm) == nil {
+			nSize, nCount := metaWeight(&nm)
+			return adjustBucketStatsTx(tx, bucket, nSize-oSize, nCount-oCount)
+		}
+		return nil
 	})
 }
 
@@ -1365,10 +1437,17 @@ func (s *Store) UpdateObjectVersionMeta(meta ObjectMeta) error {
 		if err := b.Put(versionKey(meta.Bucket, meta.Key, meta.VersionID), data); err != nil {
 			return err
 		}
-		// Also update the objects bucket if this is the latest
+		// Also update the objects bucket if this is the latest, adjusting the cached
+		// counters by the delta between the old and new latest pointer.
 		if meta.IsLatest {
 			ob := tx.Bucket(objectsBucket)
-			return ob.Put(objectMetaKey(meta.Bucket, meta.Key), data)
+			mk := objectMetaKey(meta.Bucket, meta.Key)
+			oSize, oCount := metaWeight(getObjectMetaTx(ob, mk))
+			if err := ob.Put(mk, data); err != nil {
+				return err
+			}
+			nSize, nCount := metaWeight(&meta)
+			return adjustBucketStatsTx(tx, meta.Bucket, nSize-oSize, nCount-oCount)
 		}
 		return nil
 	})

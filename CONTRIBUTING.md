@@ -53,7 +53,7 @@ cd web && npm install && npm run build
 ```
 
 Please add tests for any behavior change. The data-durability subsystems
-(`erasure`, `cluster`, `replication`) are held to a higher bar — new logic there
+(`erasure`, `cluster`, `replication`) are held to a higher bar, new logic there
 should come with fault-injection coverage (corrupt a shard and heal, lose a
 node, partition two sites and check convergence). See the existing
 `*_test.go` files in those packages for the pattern.
@@ -61,7 +61,7 @@ node, partition two sites and check convergence). See the existing
 ## Submitting changes
 
 1. Fork and create a feature branch off `main`.
-2. Keep changes focused; one logical change per PR.
+2. Keep changes focused. One logical change per PR.
 3. Run `go test ./...` and `npm run build` before opening the PR.
 4. Use clear, present-tense commit messages (e.g. `Fix versioned ListObjectsV2 empty result`).
    **Sign off each commit** with `git commit -s` (see DCO below).
@@ -78,7 +78,7 @@ automatically on your pull request.
   > I have read the CLA Document and I hereby sign the CLA
 
   This grants Kodiqa Solutions the right to keep VaultS3 open source **and** offer
-  commercial editions — it's what makes the open-core model possible. You keep full
+  commercial editions, it's what makes the open-core model possible. You keep full
   ownership of your contributions. One signature covers all your future PRs.
 
 - **DCO (sign off each commit).** A **`Signed-off-by:`** line on every commit

@@ -53,3 +53,53 @@ func TestBucketStatsCounter(t *testing.T) {
 	}
 	check("bucket b unchanged", 0, 0)
 }
+
+// TestBackfillBucketStatsFromMetadata verifies the atomic backfill computes size
+// and count from the metadata index and skips delete markers.
+func TestBackfillBucketStatsFromMetadata(t *testing.T) {
+	s := newTestStore(t)
+	s.PutObjectMeta(ObjectMeta{Bucket: "vb", Key: "a", Size: 100})
+	s.PutObjectMeta(ObjectMeta{Bucket: "vb", Key: "b", Size: 250})
+	s.PutObjectMeta(ObjectMeta{Bucket: "vb", Key: "c", DeleteMarker: true}) // not counted
+
+	st, err := s.BackfillBucketStats("vb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Count != 2 || st.Size != 350 {
+		t.Fatalf("backfill: got count=%d size=%d, want 2/350", st.Count, st.Size)
+	}
+	// And it seeded the cached counter.
+	if got, ok, _ := s.BucketStats("vb"); !ok || got.Size != 350 || got.Count != 2 {
+		t.Fatalf("seeded counter: ok=%v %+v", ok, got)
+	}
+}
+
+// TestVersionPointerStatsDelta verifies that repointing the latest version (via
+// SetLatestVersion and UpdateObjectVersionMeta) adjusts the cached bucket counter,
+// which previously it bypassed, causing permanent drift on version delete/promote.
+func TestVersionPointerStatsDelta(t *testing.T) {
+	s := newTestStore(t)
+	s.PutObjectMeta(ObjectMeta{Bucket: "vb", Key: "a", Size: 100})
+	s.SetBucketStats("vb", BucketStat{Size: 100, Count: 1})
+
+	// Two versions of "a" recorded in the versions bucket (no counter effect).
+	s.PutObjectVersion(ObjectMeta{Bucket: "vb", Key: "a", VersionID: "v2", Size: 500})
+	s.PutObjectVersion(ObjectMeta{Bucket: "vb", Key: "a", VersionID: "v1", Size: 100})
+
+	// Repoint latest to v2 (500 bytes): counter must reflect +400.
+	if err := s.SetLatestVersion("vb", "a", "v2"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, _ := s.BucketStats("vb"); st.Size != 500 || st.Count != 1 {
+		t.Fatalf("after SetLatestVersion v2: got size=%d count=%d, want 500/1", st.Size, st.Count)
+	}
+
+	// Promote v1 (100 bytes) as latest: counter must go back to 100.
+	if err := s.UpdateObjectVersionMeta(ObjectMeta{Bucket: "vb", Key: "a", VersionID: "v1", Size: 100, IsLatest: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, _ := s.BucketStats("vb"); st.Size != 100 {
+		t.Fatalf("after promote v1: got size=%d, want 100", st.Size)
+	}
+}

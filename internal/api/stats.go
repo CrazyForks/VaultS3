@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"runtime"
 	"time"
-
-	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 )
 
 // bucketStat returns a bucket's size + object count from the maintained counter,
@@ -16,9 +14,16 @@ func (h *APIHandler) bucketStatCounter(bucket string) (size, count int64) {
 	if st, ok, _ := h.store.BucketStats(bucket); ok {
 		return st.Size, st.Count
 	}
-	size, count, _ = h.engine.BucketSize(bucket)
-	h.store.SetBucketStats(bucket, metadata.BucketStat{Size: size, Count: count})
-	return size, count
+	// One-time backfill from the metadata index (a single atomic walk + seed),
+	// which is correct for versioned/compressed/encrypted buckets — an engine
+	// filesystem walk would count on-disk (compressed/encrypted) bytes and skip
+	// versioned data under .vs/.
+	st, err := h.store.BackfillBucketStats(bucket)
+	if err != nil {
+		size, count, _ = h.engine.BucketSize(bucket)
+		return size, count
+	}
+	return st.Size, st.Count
 }
 
 type bucketStat struct {

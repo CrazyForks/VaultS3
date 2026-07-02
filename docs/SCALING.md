@@ -1,13 +1,13 @@
-# VaultS3 — Scaling & Operations Guide
+# VaultS3: Scaling & Operations Guide
 
 This guide explains how to scale VaultS3 across **multiple disks** and **multiple
 servers**, and provides step-by-step runbooks for recovering from a **lost disk**
 or a **lost server**.
 
-> **TL;DR for "4 disks per server, going horizontal":**
+> **TLDR for "4 disks per server, going horizontal":**
 > Use **erasure coding** to spread data across the 4 disks on each server (survives
 > disk loss), and a **Raft cluster** with `replica_count ≥ 2` to spread data across
-> servers (survives server loss). These are two independent redundancy layers — use
+> servers (survives server loss). These are two independent redundancy layers, use
 > **both** for full protection.
 
 ---
@@ -18,7 +18,7 @@ VaultS3 protects data at two different levels. Understand both before designing 
 
 | Layer | Protects against | Mechanism | Config block |
 |-------|------------------|-----------|--------------|
-| **Erasure coding (EC)** | **Disk** failure *within one server* | Reed–Solomon shards striped across local disks | `erasure:` |
+| **Erasure coding (EC)** | **Disk** failure *within one server* | Reed, Solomon shards striped across local disks | `erasure:` |
 | **Clustering** | **Server/node** failure | Raft (metadata) + consistent-hash placement with N replicas (object data) across nodes | `cluster:` |
 
 Key facts:
@@ -29,7 +29,7 @@ Key facts:
 - **Metadata** (bucket/object index) lives in a local embedded BoltDB per node. In a
   cluster it is replicated via **Raft** and is durable only while a Raft **quorum**
   (majority of nodes) is alive.
-- **Storage is shared-nothing.** Each node stores its own object data locally; there is
+- **Storage is shared-nothing.** Each node stores its own object data locally. There is
   no shared SAN/NFS requirement.
 
 ---
@@ -45,7 +45,7 @@ Key facts:
 
 ---
 
-## 3. Single server, multiple disks — Erasure coding
+## 3. Single server, multiple disks: Erasure coding
 
 Erasure coding splits each object into `data_shards` data shards plus `parity_shards`
 parity shards, then distributes them **round-robin** across the disks listed in
@@ -74,32 +74,32 @@ erasure:
 ### Sizing rules
 
 - Number of `data_dirs` should be **≥ `data_shards + parity_shards`** so each shard can
-  land on its own disk. (Fewer disks still works — shards share disks round-robin — but
+  land on its own disk. (Fewer disks still works, shards share disks round-robin, but
   you lose independent-failure protection.)
 - **Usable capacity ≈ raw × `data_shards / (data_shards + parity_shards)`.**
   Example: `4 + 2` over six 4 TB disks = 24 TB raw → **~16 TB usable**, tolerates 2 disk losses.
-- **Failure tolerance = `parity_shards`.** `4+2` survives 2 disks; `6+2` survives 2 of 8; `3+1` survives 1.
-- Objects **smaller than `block_size`** are stored whole (no EC) for efficiency — they are
+- **Failure tolerance = `parity_shards`.** `4+2` survives 2 disks. `6+2` survives 2 of 8. `3+1` survives 1.
+- Objects **smaller than `block_size`** are stored whole (no EC) for efficiency, they are
   protected by clustering replicas, not EC. Size `block_size` to your workload.
 
 ### How healing works
 
 - A background **Healer** scans on the `heal_interval_secs` cadence, detects objects with
-  missing/corrupt shards, and **reconstructs them from parity** onto a healthy disk —
+  missing/corrupt shards, and **reconstructs them from parity** onto a healthy disk, 
   automatically and transparently.
 - Reads of a *degraded* object (some shards missing, but ≤ `parity_shards`) succeed live by
-  reconstructing on the fly; a warning is logged.
+  reconstructing on the fly. A warning is logged.
 - You can trigger an **on-demand** heal pass with `POST /api/v1/heal?bucket=&prefix=`
-  (both params optional — empty `bucket` scans all buckets). It runs the same
+  (both params optional, empty `bucket` scans all buckets). It runs the same
   reconstruction as the background healer and returns `202 heal initiated`. Use it to
   repair immediately after replacing a disk instead of waiting for the next interval.
 
 ---
 
-## 4. Multiple servers — Raft cluster
+## 4. Multiple servers: Raft cluster
 
 A cluster gives you horizontal capacity and **survives losing a node**. Metadata is kept
-strongly consistent by **HashiCorp Raft**; object data is placed across nodes using a
+strongly consistent by **HashiCorp Raft**. Object data is placed across nodes using a
 **consistent hash ring** with `replica_count` copies per object.
 
 ### Quorum sizing (read this first)
@@ -117,12 +117,12 @@ Raft needs a **majority** of nodes alive to elect a leader and accept writes.
 > adding fault tolerance and risks split-brain.
 
 Set `replica_count` for object data independently of cluster size. For 3 nodes,
-`replica_count: 3` keeps a full copy on every node (max durability); `replica_count: 2`
+`replica_count: 3` keeps a full copy on every node (max durability). `replica_count: 2`
 trades one copy for ~33% more usable capacity.
 
-### Configuration — per node
+### Configuration: per node
 
-Each node gets a unique `node_id`. **Exactly one** node bootstraps; the rest join it.
+Each node gets a unique `node_id`. **Exactly one** node bootstraps. The rest join it.
 
 **Node 1 (bootstrap):**
 ```yaml
@@ -167,7 +167,7 @@ cluster:
 
 - `peers` entries use the format **`nodeID@host:raftPort`**.
 - `peer_apis` maps **`nodeID → host:apiPort`** so nodes can proxy S3 requests to the data owner.
-- **Optional — separate the cluster control plane from S3 traffic** (recommended for security):
+- **Optional, separate the cluster control plane from S3 traffic** (recommended for security):
   ```yaml
   server:
     internode_address: "10.0.0.11"   # private NIC
@@ -188,7 +188,7 @@ cluster:
      -H 'Content-Type: application/json' \
      -d '{"node_id":"node-2","addr":"<node2-host>:9001"}'
    ```
-   (If you POST to a follower you get a `307` redirect to the leader — follow it.)
+   (If you POST to a follower you get a `307` redirect to the leader, follow it.)
 4. Verify all members are present and voting:
    ```bash
    curl -s http://node1:9000/cluster/status | jq '.servers'
@@ -199,7 +199,7 @@ cluster:
 
 | Action | Method & path | Body |
 |--------|---------------|------|
-| Status / membership | `GET /cluster/status` | — |
+| Status / membership | `GET /cluster/status` |, |
 | Add a node | `POST /cluster/join` | `{"node_id":"...","addr":"host:raftPort"}` |
 | Remove a node | `POST /cluster/leave` | `{"node_id":"..."}` |
 
@@ -249,10 +249,10 @@ cluster:
 
 - **Cluster health:** `GET /cluster/status` → leader, member list, per-node suffrage.
 - **Node liveness:** `GET /health`.
-- **Metrics (Prometheus):** `GET /metrics` — watch for replication lag, heal activity, and
+- **Metrics (Prometheus):** `GET /metrics`, watch for replication lag, heal activity, and
   per-node request distribution.
 - **Failure detection** is automatic: the detector marks a peer `suspect` after
-  `suspect_after` missed probes and `down` after `down_after`; the failover proxy then
+  `suspect_after` missed probes and `down` after `down_after`. The failover proxy then
   routes reads/writes to a healthy replica.
 
 ---
@@ -261,11 +261,11 @@ cluster:
 
 ### 7a. Recover from a **lost disk** (EC enabled)
 
-**Symptom:** one mount point in `data_dirs` is failed/unmounted; objects with a shard on
+**Symptom:** one mount point in `data_dirs` is failed/unmounted. Objects with a shard on
 that disk are *degraded* but still readable (as long as failures ≤ `parity_shards`).
 
 1. **Confirm tolerance.** Ensure no more than `parity_shards` disks are down. If more are
-   down than parity, those objects are unrecoverable from EC alone — restore from a cluster
+   down than parity, those objects are unrecoverable from EC alone, restore from a cluster
    replica or backup instead.
 2. **Replace the hardware.** Swap the failed disk and mount it at the **same path** listed in
    `data_dirs` (e.g. `/mnt/disk3`). Ensure ownership/permissions match the VaultS3 user.
@@ -280,20 +280,20 @@ that disk are *degraded* but still readable (as long as failures ≤ `parity_sha
    confirm shard files are repopulating on the new disk.
 
 > If you front the disks with hardware/software RAID instead of EC, follow your RAID
-> controller's rebuild procedure; VaultS3 sees a single volume and needs no action.
+> controller's rebuild procedure. VaultS3 sees a single volume and needs no action.
 
 ### 7b. Recover from a **lost server / node** (cluster enabled)
 
-**Symptom:** a node is unreachable; `cluster/status` shows it as `down`. As long as a Raft
+**Symptom:** a node is unreachable. `cluster/status` shows it as `down`. As long as a Raft
 **quorum survives**, the cluster keeps serving via the failover proxy and surviving replicas.
 
-**Case A — node comes back (transient outage):**
+**Case A, node comes back (transient outage):**
 1. Restart the VaultS3 process on the node with its **original `node_id`** and config
    (`bootstrap: false`). It rejoins, catches up via Raft, and the rebalancer re-syncs any
    data it missed (throttled by `rebalance.max_bandwidth_mbps`).
-2. Verify with `GET /cluster/status` — the node returns to `Voter`/healthy.
+2. Verify with `GET /cluster/status`, the node returns to `Voter`/healthy.
 
-**Case B — node is permanently dead (replacement):**
+**Case B, node is permanently dead (replacement):**
 1. **Remove the dead node** from the cluster so it stops counting toward quorum:
    ```bash
    curl -X POST http://<leader>:9000/cluster/leave -d '{"node_id":"node-3"}'
@@ -308,10 +308,10 @@ that disk are *degraded* but still readable (as long as failures ≤ `parity_sha
 4. The rebalancer redistributes the lost node's share of objects onto the new member to
    restore `replica_count`. Watch `/metrics` and `/cluster/status` until balanced.
 
-**Case C — quorum lost (majority of nodes down at once):**
+**Case C, quorum lost (majority of nodes down at once):**
 - Writes are rejected and no leader can be elected until a majority is restored. **Recover/restart
   enough original nodes to regain majority** (their Raft logs and snapshots reconstruct state).
-- If a majority is permanently lost, the cluster cannot self-recover — restore from **backup**
+- If a majority is permanently lost, the cluster cannot self-recover, restore from **backup**
   (Section 9) or a **replication peer** (Section 8). This is why an odd node count and an
   off-cluster backup/replica matter.
 
@@ -320,7 +320,7 @@ that disk are *degraded* but still readable (as long as failures ≤ `parity_sha
 ## 8. Cross-site replication (disaster recovery)
 
 For geo-redundancy or a warm standby at another site, replicate to a **peer VaultS3**
-instance. (Replication targets are VaultS3-to-VaultS3 only — not arbitrary S3 endpoints.)
+instance. (Replication targets are VaultS3-to-VaultS3 only, not arbitrary S3 endpoints.)
 
 ```yaml
 replication:
@@ -336,9 +336,9 @@ replication:
       secret_key: "..."
 ```
 
-- **`push`** — async, queue-backed, one-directional to the peer(s). Triggered on object
-  PUT/DELETE plus a periodic scan; retries with backoff.
-- **`active-active`** — bidirectional multi-site sync with vector clocks and conflict
+- **`push`**: async, queue-backed, one-directional to the peer(s). Triggered on object
+  PUT/DELETE plus a periodic scan. Retries with backoff.
+- **`active-active`**: bidirectional multi-site sync with vector clocks and conflict
   resolution (`conflict_strategy`: `last-writer-wins` (default), `largest-object`,
   `site-preference`). Set a unique `site_id` per site.
 
@@ -371,14 +371,14 @@ backup:
 ## 10. Known limitations & caveats
 
 - **Metadata durability = Raft quorum.** Lose a majority of nodes simultaneously and cluster
-  state cannot self-recover; you must restore original nodes or fall back to backup/replica.
+  state cannot self-recover. You must restore original nodes or fall back to backup/replica.
 - **EC protects object data, not metadata.** Metadata redundancy comes from Raft (in a
   cluster) or from your `metadata_dir` backups (standalone).
-- **EC shards do not span nodes**, and **cluster replicas do not protect a single disk** —
+- **EC shards do not span nodes**, and **cluster replicas do not protect a single disk**, 
   combine both layers for full disk-*and*-node protection.
-- **Backup:** local target only; restore is a manual file copy.
-- **Replication:** VaultS3↔VaultS3 only; not to AWS S3 or other providers.
-- **Config nit:** sample `heal_interval_secs: 300` vs. an older code default of 3600 — set it
+- **Backup:** local target only. Restore is a manual file copy.
+- **Replication:** VaultS3↔VaultS3 only. Not to AWS S3 or other providers.
+- **Config nit:** sample `heal_interval_secs: 300` vs. an older code default of 3600, set it
   explicitly to avoid surprises.
 
 ---
@@ -386,7 +386,7 @@ backup:
 ## 11. Listing very large buckets (many objects under one prefix)
 
 VaultS3 keeps every object's metadata in a sorted BoltDB index, so listing a
-prefix is a **seek to the continuation marker + read one page** — `O(log n +
+prefix is a **seek to the continuation marker + read one page**, `O(log n +
 page_size)`. Page latency stays flat regardless of how many objects the bucket
 holds, because the cost is the page, not the bucket:
 
@@ -398,16 +398,16 @@ holds, because the cost is the page, not the bucket:
 | 10,000,000               | ~0.7 ms                          |
 | 100,000,000              | ~0.7 ms                          |
 
-Measured — not extrapolated — across five orders of magnitude: page latency is
+Measured, not extrapolated, across five orders of magnitude: page latency is
 flat from a thousand to **a hundred million** objects in a single prefix
-(`go test -bench BenchmarkListLatestObjectsPage ./internal/metadata`; a single
+(`go test -bench BenchmarkListLatestObjectsPage ./internal/metadata`. A single
 mid-tier laptop core. The dominant cost is JSON-decoding the 1000-key page, not
 the seek.)
 
 Practical guidance for huge flat prefixes (tens of millions of keys):
 
-- **Paginate** with the `ContinuationToken` / `StartAfter` you get back — each
-  page is cheap. The per-page cap is the S3-standard 1000 keys; that's by design.
+- **Paginate** with the `ContinuationToken` / `StartAfter` you get back, each
+  page is cheap. The per-page cap is the S3-standard 1000 keys. That's by design.
 - This applies to **prefix** listing. Arbitrary substring/partial-name matching
   (`*foo*` anywhere in a key) is a different operation and is not served by the
   ordered index.

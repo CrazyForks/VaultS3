@@ -190,6 +190,16 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	// The pre-read quota check used the declared Content-Length, which an
+	// aws-chunked client controls via X-Amz-Decoded-Content-Length. Re-check
+	// against the real decoded size so a bucket quota cannot be undercut by a false
+	// declared length.
+	if int64(len(body)) > r.ContentLength {
+		if !h.checkQuota(w, bucket, int64(len(body))) {
+			return
+		}
+	}
+
 	// Validate Content-MD5 if present
 	if validateContentMD5(w, r.Header.Get("Content-MD5"), body) {
 		return
@@ -259,29 +269,7 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 			ChecksumSHA1:       csha1,
 		}
 
-		// Apply inline retention
-		if mode := r.Header.Get("X-Amz-Object-Lock-Mode"); mode != "" {
-			meta.RetentionMode = mode
-			if until := r.Header.Get("X-Amz-Object-Lock-Retain-Until-Date"); until != "" {
-				if t, err := time.Parse(time.RFC3339, until); err == nil {
-					meta.RetentionUntil = t.Unix()
-				}
-			}
-		}
-
-		// Apply bucket default retention if configured and no inline retention
-		if meta.RetentionMode == "" {
-			if bucketInfo, err := h.store.GetBucket(bucket); err == nil {
-				if bucketInfo.DefaultRetentionMode != "" && bucketInfo.DefaultRetentionDays > 0 {
-					meta.RetentionMode = bucketInfo.DefaultRetentionMode
-					meta.RetentionUntil = now.Unix() + int64(bucketInfo.DefaultRetentionDays*86400)
-				}
-			}
-		}
-
-		if lh := r.Header.Get("X-Amz-Object-Lock-Legal-Hold"); strings.EqualFold(lh, "ON") {
-			meta.LegalHold = true
-		}
+		h.applyObjectLock(r, &meta, bucket, now)
 
 		h.store.PutObjectVersion(meta)
 		h.store.PutObjectMeta(meta) // update "latest pointer"
@@ -347,6 +335,7 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 			ChecksumCRC32C:     ccrc32c,
 			ChecksumSHA1:       csha1,
 		}
+		h.applyObjectLock(r, &meta, bucket, now)
 
 		h.store.PutObjectVersion(meta)
 		h.store.PutObjectMeta(meta)
@@ -418,6 +407,7 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 	if ssecKey != nil {
 		meta.SSECustomerKeyMD5 = ssecKey.keyMD5
 	}
+	h.applyObjectLock(r, &meta, bucket, now)
 
 	h.store.PutObjectMeta(meta)
 
@@ -537,13 +527,20 @@ func (h *ObjectHandler) GetObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	// A whole-object checksum must not be sent on a partial (206) response: modern
+	// SDKs (boto3 >= 1.36, aws-cli v2) validate x-amz-checksum-* against the bytes
+	// they actually receive, and a whole-object checksum never matches a range or a
+	// single part, so range downloads would fail with a checksum mismatch.
+	isPartial := r.Header.Get("Range") != "" || r.URL.Query().Get("partNumber") != ""
 	if meta != nil {
 		w.Header().Set("Content-Type", meta.ContentType)
 		w.Header().Set("ETag", meta.ETag)
 		w.Header().Set("Last-Modified", time.Unix(meta.LastModified, 0).UTC().Format(http.TimeFormat))
 		setHTTPMetadataHeaders(w, meta)
 		setUserMetadataHeaders(w, meta)
-		setChecksumHeaders(w, meta)
+		if !isPartial {
+			setChecksumHeaders(w, meta)
+		}
 		if meta.PartsCount > 0 {
 			w.Header().Set("X-Amz-Mp-Parts-Count", strconv.Itoa(meta.PartsCount))
 		}
@@ -801,6 +798,15 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 		return
 	}
 
+	// Non-versioned: enforce any WORM retention / legal hold before deleting.
+	// Without this, an object under a COMPLIANCE (or non-bypassed GOVERNANCE)
+	// retention lock could be permanently deleted, defeating object lock.
+	bypassGovNV := strings.EqualFold(r.Header.Get("X-Amz-Bypass-Governance-Retention"), "true")
+	if err := h.checkObjectLock(bucket, key, "", bypassGovNV); err != nil {
+		writeS3Error(w, "AccessDenied", err.Error(), http.StatusForbidden)
+		return
+	}
+
 	// Non-versioned: delete normally
 	if err := h.engine.DeleteObject(bucket, key); err != nil {
 		slog.Error("internal error", "error", err)
@@ -824,12 +830,49 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 	}
 }
 
+// applyObjectLock populates meta's retention and legal-hold from the request's
+// inline object-lock headers, falling back to the bucket's default retention. It
+// is shared by every PutObject path (versioned, suspended, non-versioned) so WORM
+// works the same regardless of a bucket's versioning state; previously only the
+// versioned path applied these, so inline locks were silently dropped on
+// non-versioned buckets.
+func (h *ObjectHandler) applyObjectLock(r *http.Request, meta *metadata.ObjectMeta, bucket string, now time.Time) {
+	if mode := r.Header.Get("X-Amz-Object-Lock-Mode"); mode != "" {
+		meta.RetentionMode = mode
+		if until := r.Header.Get("X-Amz-Object-Lock-Retain-Until-Date"); until != "" {
+			if t, err := time.Parse(time.RFC3339, until); err == nil {
+				meta.RetentionUntil = t.Unix()
+			}
+		}
+	}
+	if meta.RetentionMode == "" {
+		if bucketInfo, err := h.store.GetBucket(bucket); err == nil {
+			if bucketInfo.DefaultRetentionMode != "" && bucketInfo.DefaultRetentionDays > 0 {
+				meta.RetentionMode = bucketInfo.DefaultRetentionMode
+				meta.RetentionUntil = now.Unix() + int64(bucketInfo.DefaultRetentionDays*86400)
+			}
+		}
+	}
+	if lh := r.Header.Get("X-Amz-Object-Lock-Legal-Hold"); strings.EqualFold(lh, "ON") {
+		meta.LegalHold = true
+	}
+}
+
 // checkObjectLock checks if an object version is locked (legal hold or retention).
 // If bypassGovernance is true, GOVERNANCE retention is skipped (requires s3:BypassGovernanceRetention).
 func (h *ObjectHandler) checkObjectLock(bucket, key, versionID string, bypassGovernance ...bool) error {
-	meta, err := h.store.GetObjectVersion(bucket, key, versionID)
+	var meta *metadata.ObjectMeta
+	var err error
+	if versionID == "" {
+		// No version specified: check the current object (non-versioned buckets, or
+		// the latest pointer). GetObjectVersion(...,"") does not resolve to the
+		// current object, so read it directly.
+		meta, err = h.store.GetObjectMeta(bucket, key)
+	} else {
+		meta, err = h.store.GetObjectVersion(bucket, key, versionID)
+	}
 	if err != nil {
-		return nil // version doesn't exist in metadata, allow delete
+		return nil // object/version doesn't exist in metadata, allow delete
 	}
 
 	if meta.LegalHold {
@@ -1391,6 +1434,7 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 	}
 
 	prefix := r.URL.Query().Get("prefix")
+	delimiter := r.URL.Query().Get("delimiter")
 	startAfter := r.URL.Query().Get("start-after")
 	contToken := r.URL.Query().Get("continuation-token")
 	maxKeysStr := r.URL.Query().Get("max-keys")
@@ -1401,9 +1445,10 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		}
 	}
 
-	// A continuation token (opaque, base64 of the last key returned) takes
-	// precedence over start-after and resumes exactly where the previous page
-	// ended — this is what lets clients walk past the first page at any scale.
+	// A continuation token (opaque, base64 of the cursor after the last returned
+	// entry) takes precedence over start-after and resumes exactly where the
+	// previous page ended — this is what lets clients walk past the first page at
+	// any scale.
 	effectiveStart := startAfter
 	if contToken != "" {
 		if dec, err := base64.StdEncoding.DecodeString(contToken); err == nil {
@@ -1411,7 +1456,11 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		}
 	}
 
-	objects, truncated, err := h.listObjects(bucket, prefix, effectiveStart, maxKeys)
+	// A delimiter collapses keys sharing the next path segment into CommonPrefixes
+	// ("folders"): how clients (aws s3 ls, the dashboard file browser) browse a
+	// bucket. The store does the grouping at the sorted index level so it stays
+	// O(page) even for huge prefixes. With no delimiter this returns a flat page.
+	metas, commonPrefixes, truncated, nextCursor, err := h.store.ListLatestObjectsDelimited(bucket, prefix, delimiter, effectiveStart, maxKeys)
 	if err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
@@ -1425,45 +1474,54 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		Size         int64  `xml:"Size"`
 		StorageClass string `xml:"StorageClass"`
 	}
+	type xmlCommonPrefix struct {
+		Prefix string `xml:"Prefix"`
+	}
 	type xmlResponse struct {
-		XMLName               xml.Name     `xml:"ListBucketResult"`
-		Xmlns                 string       `xml:"xmlns,attr"`
-		Name                  string       `xml:"Name"`
-		Prefix                string       `xml:"Prefix"`
-		MaxKeys               int          `xml:"MaxKeys"`
-		IsTruncated           bool         `xml:"IsTruncated"`
-		Contents              []xmlContent `xml:"Contents"`
-		KeyCount              int          `xml:"KeyCount"`
-		ContinuationToken     string       `xml:"ContinuationToken,omitempty"`
-		NextContinuationToken string       `xml:"NextContinuationToken,omitempty"`
-		StartAfter            string       `xml:"StartAfter,omitempty"`
+		XMLName               xml.Name          `xml:"ListBucketResult"`
+		Xmlns                 string            `xml:"xmlns,attr"`
+		Name                  string            `xml:"Name"`
+		Prefix                string            `xml:"Prefix"`
+		Delimiter             string            `xml:"Delimiter,omitempty"`
+		MaxKeys               int               `xml:"MaxKeys"`
+		IsTruncated           bool              `xml:"IsTruncated"`
+		Contents              []xmlContent      `xml:"Contents"`
+		CommonPrefixes        []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
+		KeyCount              int               `xml:"KeyCount"`
+		ContinuationToken     string            `xml:"ContinuationToken,omitempty"`
+		NextContinuationToken string            `xml:"NextContinuationToken,omitempty"`
+		StartAfter            string            `xml:"StartAfter,omitempty"`
 	}
 
 	resp := xmlResponse{
 		Xmlns:             "http://s3.amazonaws.com/doc/2006-03-01/",
 		Name:              bucket,
 		Prefix:            prefix,
+		Delimiter:         delimiter,
 		MaxKeys:           maxKeys,
 		IsTruncated:       truncated,
-		KeyCount:          len(objects),
 		ContinuationToken: contToken,
 		StartAfter:        startAfter,
 	}
 
-	for _, obj := range objects {
+	for _, m := range metas {
 		resp.Contents = append(resp.Contents, xmlContent{
-			Key:          obj.Key,
-			LastModified: time.Unix(obj.LastModified, 0).UTC().Format(time.RFC3339),
-			ETag:         obj.ETag,
-			Size:         obj.Size,
+			Key:          m.Key,
+			LastModified: time.Unix(m.LastModified, 0).UTC().Format(time.RFC3339),
+			ETag:         m.ETag,
+			Size:         m.Size,
 			StorageClass: "STANDARD",
 		})
 	}
+	for _, cp := range commonPrefixes {
+		resp.CommonPrefixes = append(resp.CommonPrefixes, xmlCommonPrefix{Prefix: cp})
+	}
+	resp.KeyCount = len(resp.Contents) + len(resp.CommonPrefixes)
 
-	// When more keys remain, hand back an opaque token the client echoes as
+	// When more entries remain, hand back an opaque token the client echoes as
 	// continuation-token to fetch the next page.
-	if truncated && len(objects) > 0 {
-		resp.NextContinuationToken = base64.StdEncoding.EncodeToString([]byte(objects[len(objects)-1].Key))
+	if truncated && nextCursor != "" {
+		resp.NextContinuationToken = base64.StdEncoding.EncodeToString([]byte(nextCursor))
 	}
 
 	writeXML(w, http.StatusOK, resp)

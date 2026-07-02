@@ -194,7 +194,9 @@ func parseUserMetadata(r *http.Request) map[string]string {
 // setUserMetadataHeaders emits x-amz-meta-* headers on GET/HEAD.
 func setUserMetadataHeaders(w http.ResponseWriter, meta *metadata.ObjectMeta) {
 	for k, v := range meta.UserMetadata {
-		w.Header().Set("X-Amz-Meta-"+http.CanonicalHeaderKey(k), v)
+		// Emit the key lowercased like AWS does. Direct map assignment bypasses
+		// Header.Set's Title-Case canonicalization (HTTP/2 lowercases anyway).
+		w.Header()["x-amz-meta-"+strings.ToLower(k)] = []string{v}
 	}
 }
 

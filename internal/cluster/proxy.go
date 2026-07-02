@@ -70,6 +70,10 @@ func (p *Proxy) syncMembership(apiPort int) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Drop cached reverse proxies whose address changed or whose node left, so the
+	// next request rebuilds them against the current address. Pods get a new IP on
+	// restart; without this a node would route to a dead address forever.
+	p.invalidateStaleProxiesLocked(members)
 	p.nodeAddrs = members
 	// Reconcile the ring to exactly the live member set.
 	want := make(map[string]bool, len(members))
@@ -176,6 +180,17 @@ func (p *Proxy) RemoveNodeAddr(nodeID string) {
 	defer p.mu.Unlock()
 	delete(p.nodeAddrs, nodeID)
 	delete(p.proxies, nodeID)
+}
+
+// invalidateStaleProxiesLocked deletes cached reverse proxies for nodes whose
+// address in the new membership differs from the currently recorded one (a changed
+// address or a departed node). The caller must hold p.mu.
+func (p *Proxy) invalidateStaleProxiesLocked(members map[string]string) {
+	for id, oldAddr := range p.nodeAddrs {
+		if members[id] != oldAddr {
+			delete(p.proxies, id)
+		}
+	}
 }
 
 func (p *Proxy) getOrCreateProxy(nodeID, addr string) *httputil.ReverseProxy {

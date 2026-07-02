@@ -193,16 +193,17 @@ func (p *PackedEngine) appendFrame(frame []byte) (uint32, int64, error) {
 // readFrame reads clen bytes at off from volume volID.
 func (p *PackedEngine) readFrame(volID uint32, off, clen int64) ([]byte, error) {
 	buf := make([]byte, clen)
+	// Hold the lock across the active-check and the read, so a concurrent volume
+	// roll (which closes activeFile under the same lock) can't close the handle
+	// between checking and reading it. If the volume is not (or no longer) the
+	// active one it has been sealed and is readable by path below.
 	p.mu.Lock()
-	active := volID == p.activeID
-	af := p.activeFile
-	p.mu.Unlock()
-	if active {
-		p.mu.Lock()
-		_, err := af.ReadAt(buf, off)
+	if volID == p.activeID {
+		_, err := p.activeFile.ReadAt(buf, off)
 		p.mu.Unlock()
 		return buf, err
 	}
+	p.mu.Unlock()
 	f, err := os.Open(p.volPath(volID))
 	if err != nil {
 		return nil, err

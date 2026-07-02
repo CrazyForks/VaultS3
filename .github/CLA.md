@@ -9,7 +9,7 @@ signing it (see "How to sign" below) you accept and agree to these terms for You
 present and future Contributions to the Project. Except for the license granted
 here, You retain all right, title, and interest in and to Your Contributions.
 
-This is a legal document; please read it carefully. If you contribute on behalf of
+This is a legal document. Please read it carefully. If you contribute on behalf of
 an employer, make sure you are authorized to sign.
 
 ## 1. Definitions
@@ -18,7 +18,7 @@ an employer, make sure you are authorized to sign.
   Agreement.
 - **"Contribution"** means any original work of authorship, including any
   modifications or additions to an existing work, that You intentionally submit to
-  Us for inclusion in the Project — by pull request, patch, commit, or any other
+  Us for inclusion in the Project, by pull request, patch, commit, or any other
   form of electronic, verbal, or written communication.
 
 ## 2. Grant of Copyright License
@@ -62,7 +62,7 @@ You represent that:
    license or other restriction of which You are personally aware and which are
    associated with any part of Your Contributions.
 
-## 5. As-Is; No Obligation
+## 5. As-Is. No Obligation
 
 You are not expected to provide support for Your Contributions, except to the
 extent You desire to. Your Contributions are provided **"AS IS"**, without
@@ -83,9 +83,9 @@ you to sign. To do so, **comment on the pull request** with exactly:
 
 > I have read the CLA Document and I hereby sign the CLA
 
-You only need to sign **once** — it covers all of your future Contributions. The
+You only need to sign **once**, it covers all of your future Contributions. The
 bot records your signature, and subsequent pull requests pass automatically.
 
 > This Agreement is provided as a template adapted from common open-source CLAs.
-> Kodiqa Solutions may have it reviewed by legal counsel; the version in the
+> Kodiqa Solutions may have it reviewed by legal counsel. The version in the
 > default branch at the time you sign is the one that applies.

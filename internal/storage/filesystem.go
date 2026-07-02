@@ -172,6 +172,9 @@ func (fs *FileSystem) ListObjects(bucket, prefix, startAfter string, maxKeys int
 		if info.IsDir() {
 			return nil
 		}
+		if strings.HasPrefix(info.Name(), ".vaults3-tmp-") {
+			return nil // in-flight upload temp file, not a real object yet
+		}
 
 		rel, err := filepath.Rel(bucketDir, path)
 		if err != nil {
@@ -230,7 +233,7 @@ func (fs *FileSystem) BucketSize(bucket string) (int64, int64, error) {
 		if info.IsDir() && info.Name() == ".vs" {
 			return filepath.SkipDir
 		}
-		if !info.IsDir() {
+		if !info.IsDir() && !strings.HasPrefix(info.Name(), ".vaults3-tmp-") {
 			totalSize += info.Size()
 			count++
 		}

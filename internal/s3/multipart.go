@@ -167,17 +167,12 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 	// Assemble the parts. When encryption is enabled we assemble into a temp file
 	// and write the object through engine.PutObject so it is encrypted at rest
 	// (per-bucket or SSE); otherwise we assemble straight to the final path.
-	objPath := h.engine.ObjectPath(bucket, key)
-	if err := os.MkdirAll(filepath.Dir(objPath), 0755); err != nil {
-		slog.Error("internal error", "error", err)
-		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-		return
-	}
-
-	assemblePath := objPath
-	if h.encryptionEnabled {
-		assemblePath = filepath.Join(h.multipartDir(uploadID), "assembled.tmp")
-	}
+	// Assemble the parts into a temp file, then write the object through
+	// engine.PutObject. This keeps completion atomic (the engine does temp+rename),
+	// routes through the packed/compressed/encrypted wrappers, and never touches a
+	// pre-existing object at the target key until the new object is fully assembled,
+	// so a failed complete (e.g. a missing part) cannot truncate or delete it.
+	assemblePath := filepath.Join(h.multipartDir(uploadID), "assembled.tmp")
 	outFile, err := os.Create(assemblePath)
 	if err != nil {
 		slog.Error("internal error", "error", err)
@@ -221,25 +216,25 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// When encrypting, write the assembled object through the engine (applies the
-	// per-bucket / SSE key), then drop the temp file.
-	if h.encryptionEnabled {
-		af, err := os.Open(assemblePath)
-		if err != nil {
-			os.Remove(assemblePath)
-			slog.Error("internal error", "error", err)
-			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-			return
-		}
-		_, _, perr := h.engine.PutObject(bucket, key, af, totalSize)
+	// Write the assembled object through the engine (atomic temp+rename; applies
+	// compression / per-bucket or SSE encryption / packing as configured), then
+	// drop the temp file.
+	af, err := os.Open(assemblePath)
+	if err != nil {
+		os.Remove(assemblePath)
+		slog.Error("internal error", "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return
+	}
+	if _, _, perr := h.engine.PutObject(bucket, key, af, totalSize); perr != nil {
 		af.Close()
 		os.Remove(assemblePath)
-		if perr != nil {
-			slog.Error("internal error", "error", perr)
-			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-			return
-		}
+		slog.Error("internal error", "error", perr)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return
 	}
+	af.Close()
+	os.Remove(assemblePath)
 
 	// S3 multipart ETag: md5(md5(part1) + md5(part2) + ...)-N
 	etag := fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(combinedHash.Sum(nil)), len(req.Parts))

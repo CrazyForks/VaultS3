@@ -1,13 +1,11 @@
 package s3
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -277,7 +275,7 @@ func (a *Authenticator) authenticatePresigned(r *http.Request) (*iam.Identity, e
 	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\nUNSIGNED-PAYLOAD",
 		r.Method,
 		uri,
-		canonicalParams.Encode(),
+		canonicalQueryEncode(canonicalParams),
 		canonicalHeaders,
 		signedHeaders,
 	)
@@ -318,6 +316,10 @@ func parseAuthParams(s string) map[string]string {
 	}
 	return params
 }
+
+// emptyPayloadSHA256 is the SHA-256 of an empty byte string, the payload hash a
+// conformant SigV4 client sends for a request with no body.
+const emptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 func buildCanonicalRequest(r *http.Request, signedHeaders string) string {
 	method := r.Method
@@ -363,30 +365,19 @@ func buildCanonicalRequest(r *http.Request, signedHeaders string) string {
 		canonicalHeaders.WriteString("\n")
 	}
 
+	// The client's X-Amz-Content-Sha256 header is the payload hash they signed
+	// with, so we use it verbatim in the canonical request and let the signature
+	// comparison authenticate it. We deliberately do NOT read the body here:
+	// buffering the entire (up to multi-GB) upload in memory would defeat streaming
+	// and let any caller with a valid access key exhaust server memory. For
+	// UNSIGNED-PAYLOAD / STREAMING-* the sentinel is likewise used as-is.
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-	if payloadHash == "" || payloadHash == "UNSIGNED-PAYLOAD" {
-		// Compute SHA256 of the actual request body
-		body, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		h := sha256.Sum256(body)
-		computedHash := hex.EncodeToString(h[:])
-		if payloadHash == "" {
-			payloadHash = computedHash
-		} else {
-			// UNSIGNED-PAYLOAD: use it for signature but don't verify body
-			// (this is correct AWS behavior — UNSIGNED-PAYLOAD is a valid sentinel)
-		}
-	} else {
-		// Client provided a specific hash — verify body matches
-		body, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		h := sha256.Sum256(body)
-		computedHash := hex.EncodeToString(h[:])
-		if payloadHash != computedHash {
-			// Body doesn't match claimed hash — use claimed hash for signature
-			// verification (which will fail if tampered), but the real protection
-			// is that SigV4 includes the hash in the signed string
-		}
+	if payloadHash == "" {
+		// No content-hash header: a conformant SigV4 client always signs one, so
+		// this is a bodyless request (GET/HEAD/DELETE). Use the empty-body hash. A
+		// request that carries a body but omits the header is non-conformant and
+		// will simply fail the signature comparison below.
+		payloadHash = emptyPayloadSHA256
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
@@ -413,6 +404,23 @@ func deriveSigningKey(secretKey, dateStr, region, service string) []byte {
 	kService := hmacSHA256(kRegion, []byte(service))
 	kSigning := hmacSHA256(kService, []byte("aws4_request"))
 	return kSigning
+}
+
+// canonicalQueryEncode builds an AWS SigV4 canonical query string: every key and
+// value strictly URI-encoded (space -> %20, RFC 3986) and the pairs sorted. Go's
+// url.Values.Encode() uses '+' for spaces and differs on sub-delimiters, so a
+// presigned URL signed by boto3/aws-cli whose query carries a space (e.g. a
+// response-content-disposition filename) failed verification here.
+func canonicalQueryEncode(v url.Values) string {
+	parts := make([]string, 0, len(v))
+	for k, vals := range v {
+		ek := uriEncode(k)
+		for _, val := range vals {
+			parts = append(parts, ek+"="+uriEncode(val))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "&")
 }
 
 func uriEncode(s string) string {

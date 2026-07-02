@@ -7,9 +7,9 @@
 
 Give each bucket its own encryption key so that, in a bucket-per-tenant
 deployment, one tenant can encrypt their bucket with a key that is **not shared**
-with any other tenant — and another tenant can opt out entirely. The key
+with any other tenant, and another tenant can opt out entirely. The key
 hierarchy uses **envelope encryption**: a master key-encryption-key (KEK) wraps a
-per-bucket data-encryption-key (DEK); objects are encrypted with their bucket's
+per-bucket data-encryption-key (DEK). Objects are encrypted with their bucket's
 DEK.
 
 ## Motivation
@@ -18,7 +18,7 @@ A common, sound multi-tenancy pattern is **one bucket per tenant** with an IAM
 access key scoped per bucket (VaultS3 already supports the IAM half). The natural
 next step is a **per-bucket encryption key**:
 
-- Tenant A encrypts their bucket; Tenant B opts out — independently.
+- Tenant A encrypts their bucket. Tenant B opts out, independently.
 - A compromise of one tenant's key does not expose any other tenant's data.
 - Offboarding a tenant can be a single **key deletion** (crypto-shredding) rather
   than a bulk object wipe.
@@ -29,9 +29,9 @@ next step is a **per-bucket encryption key**:
 | --- | --- |
 | Server-wide encryption-at-rest | ✅ `EncryptedEngine` wraps the whole engine with **one** AES-256-GCM key |
 | KMS (Vault) integration | ✅ `KMSEncryptedEngine` with a single named key |
-| Per-bucket SSE **config** API | ✅ `PutBucketEncryption` / `BucketEncryptionConfig{SSEAlgorithm, KMSKeyID}` — **declarative only** |
+| Per-bucket SSE **config** API | ✅ `PutBucketEncryption` / `BucketEncryptionConfig{SSEAlgorithm, KMSKeyID}`, **declarative only** |
 | Per-bucket IAM keys | ✅ |
-| **Per-bucket distinct keys** | ❌ **the gap** — all buckets share the one engine key |
+| **Per-bucket distinct keys** | ❌ **the gap**, all buckets share the one engine key |
 | Per-bucket opt-in / opt-out | ❌ encryption is all-or-nothing for the whole server |
 
 So the missing piece is precisely **per-bucket keys** and **per-bucket opt-in**.
@@ -50,7 +50,7 @@ to hang the new key material.
 
 ## Non-goals (initially)
 
-- Operator-blind encryption where even the operator cannot read tenant data — that
+- Operator-blind encryption where even the operator cannot read tenant data, that
   is **SSE-C / BYOK** (tenant-held keys), described as a follow-on below.
 - Per-object distinct keys (per-bucket is the isolation boundary the issue asks
   for).
@@ -70,12 +70,12 @@ per-bucket DEK (random 256-bit, one per bucket, versioned)
 object payload (AES-256-GCM, per-object random nonce)
 ```
 
-- **KEK** — a 256-bit key from `encryption.master_key` (or unwrapped via Vault
-  KMS). Used only to wrap/unwrap DEKs; never touches object data.
-- **DEK** — generated with a CSPRNG when a bucket opts in. Stored **only in
+- **KEK**: a 256-bit key from `encryption.master_key` (or unwrapped via Vault
+  KMS). Used only to wrap/unwrap DEKs. Never touches object data.
+- **DEK**: generated with a CSPRNG when a bucket opts in. Stored **only in
   wrapped form** (KEK-encrypted) in the bucket's encryption config. Unwrapped DEKs
   live in an in-memory cache, never on disk.
-- **Object** — encrypted with its bucket's current DEK, AES-256-GCM, a fresh
+- **Object**: encrypted with its bucket's current DEK, AES-256-GCM, a fresh
   random nonce per object.
 
 ### Object on-disk format
@@ -94,7 +94,7 @@ version and so legacy/plaintext objects are distinguishable:
   embedded **key version**.
 - If it does **not** start with the magic, it is either a legacy global-key object
   (decrypt with the legacy engine key if configured) or plaintext (opt-out bucket)
-  — handled by the integration layer.
+, handled by the integration layer.
 
 ### Per-bucket opt-in / opt-out
 
@@ -126,28 +126,28 @@ Wrapped DEKs are replicated like any other bucket metadata (the
 - Rotation generates DEK version `N+1`, wraps it, sets it current. **Old versions
   are retained** in `WrappedDEKs` so existing objects (which carry their version in
   the header) still decrypt.
-- New writes use the current version; historical objects are re-encrypted lazily
+- New writes use the current version. Historical objects are re-encrypted lazily
   (on next overwrite) or by an optional background re-encrypt job.
 
 ### Crypto-shredding
 
 - `ShredBucket` deletes **all** wrapped DEKs for the bucket and evicts the cache.
-- Without the DEK, the KEK cannot recover it, and the ciphertext is unrecoverable —
+- Without the DEK, the KEK cannot recover it, and the ciphertext is unrecoverable, 
   a fast, durable tenant-offboarding / right-to-erasure primitive.
 
 ### KEK sources (pluggable)
 
-1. **Config master key** (`encryption.master_key`, 32 bytes hex/base64) — simplest.
-2. **Vault KMS** (already integrated) — the KEK itself is wrapped/unwrapped by
+1. **Config master key** (`encryption.master_key`, 32 bytes hex/base64), simplest.
+2. **Vault KMS** (already integrated), the KEK itself is wrapped/unwrapped by
    Vault, so the master key never sits in config.
-3. Cloud KMS (AWS/GCP) — future, same interface.
+3. Cloud KMS (AWS/GCP), future, same interface.
 
 ## Backward compatibility & migration
 
 - **Existing globally-encrypted objects** (legacy `EncryptedEngine`, no magic
-  header): keep the legacy key available; on read, blobs without the `VS3X` magic
+  header): keep the legacy key available. On read, blobs without the `VS3X` magic
   fall back to the legacy key. New writes use per-bucket DEKs.
-- **Existing plaintext objects**: unchanged; buckets that never opt in stay
+- **Existing plaintext objects**: unchanged. Buckets that never opt in stay
   plaintext.
 - **No forced migration**: opting a bucket into encryption only affects objects
   written after opt-in (or run an optional background re-encrypt).
@@ -155,20 +155,20 @@ Wrapped DEKs are replicated like any other bucket metadata (the
 ## API surface
 
 - **S3**: `PUT /{bucket}?encryption` with `ServerSideEncryptionConfiguration` to
-  enable; `GET`/`DELETE` to inspect/disable. (Disable ≠ shred — shred is an
+  enable. `GET`/`DELETE` to inspect/disable. (Disable ≠ shred, shred is an
   explicit admin action.)
-- **Dashboard**: bucket config panel — encryption toggle, "rotate key", and a
+- **Dashboard**: bucket config panel, encryption toggle, "rotate key", and a
   guarded "shred key (irreversible)" action.
 - **SSE-C / BYOK (follow-on)**: accept `x-amz-server-side-encryption-customer-*`
-  headers so a tenant supplies their own key per request; the server holds only a
-  verification hash, never the key — the operator-blind option.
+  headers so a tenant supplies their own key per request. The server holds only a
+  verification hash, never the key, the operator-blind option.
 
 ## Security considerations
 
-- Unwrapped DEKs only in memory; wrapped at rest. KEK never written by the app.
-- AES-256-GCM with a unique random nonce per object (no nonce reuse — a new nonce
+- Unwrapped DEKs only in memory. Wrapped at rest. KEK never written by the app.
+- AES-256-GCM with a unique random nonce per object (no nonce reuse, a new nonce
   is drawn per `Encrypt`).
-- Decrypting bucket A's object under bucket B's key fails (GCM auth) — isolation is
+- Decrypting bucket A's object under bucket B's key fails (GCM auth), isolation is
   cryptographic, not just an access check.
 - Wrong KEK ⇒ DEK unwrap fails ⇒ no data access.
 
@@ -180,7 +180,7 @@ Wrapped DEKs are replicated like any other bucket metadata (the
 
 ## Testing
 
-- Round-trip per bucket; **cross-bucket isolation** (B's key can't read A's data).
+- Round-trip per bucket. **cross-bucket isolation** (B's key can't read A's data).
 - Opt-out passthrough (no key ⇒ plaintext in/out).
 - Rotation (old-version objects still decrypt after rotate).
 - Crypto-shred (after shred, decrypt fails).
@@ -188,10 +188,10 @@ Wrapped DEKs are replicated like any other bucket metadata (the
 
 ## Rollout plan
 
-1. **Prototype (this PR):** `internal/bucketcrypto` — envelope core + versioned key
+1. **Prototype (this PR):** `internal/bucketcrypto`, envelope core + versioned key
    store + per-object format, with the full test matrix above. Not yet wired into
    the live write path.
-2. Extend `BucketEncryptionConfig` + store wrapped DEKs; wire `PUT ?encryption` to
+2. Extend `BucketEncryptionConfig` + store wrapped DEKs. Wire `PUT ?encryption` to
    generate/store a DEK.
 3. Integrate a per-bucket-keyed engine layer (resolve bucket DEK at
    `PutObject`/`GetObject`) with legacy-key read fallback.

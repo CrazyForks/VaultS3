@@ -67,7 +67,7 @@ func generatePresignedURLMethod(method, host, bucket, key, accessKey, secretKey,
 	}
 
 	canonicalURI := fmt.Sprintf("/%s/%s", bucket, key)
-	canonicalQueryString := params.Encode()
+	canonicalQueryString := canonicalQueryEncode(params)
 	canonicalHeaders := fmt.Sprintf("host:%s\n", host)
 	signedHeaders := "host"
 

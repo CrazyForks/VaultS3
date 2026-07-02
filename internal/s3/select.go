@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"regexp"
@@ -111,37 +113,29 @@ func (h *ObjectHandler) SelectObjectContent(w http.ResponseWriter, r *http.Reque
 	// Execute query
 	results := executeQuery(query, records)
 
-	// Write output
+	// Build the result payload (JSON lines or CSV) into a buffer.
+	var payload bytes.Buffer
 	if req.OutputSerialization.JSON != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		enc := json.NewEncoder(w)
+		enc := json.NewEncoder(&payload)
 		for _, rec := range results {
 			enc.Encode(rec)
 		}
 	} else {
-		// Default to CSV output
-		w.Header().Set("Content-Type", "text/csv")
-		w.WriteHeader(http.StatusOK)
-		cw := csv.NewWriter(w)
+		cw := csv.NewWriter(&payload)
 		delim := ','
 		if req.OutputSerialization.CSV != nil && req.OutputSerialization.CSV.FieldDelimiter != "" {
 			delim = rune(req.OutputSerialization.CSV.FieldDelimiter[0])
 		}
 		cw.Comma = delim
-
-		// Write header if we have results
 		if len(results) > 0 {
 			var headers []string
 			for k := range results[0] {
 				headers = append(headers, k)
 			}
-			// Sort headers for deterministic output
-			sortStrings(headers)
+			sortStrings(headers) // deterministic column order
 			cw.Write(headers)
-
 			for _, rec := range results {
-				var row []string
+				row := make([]string, 0, len(headers))
 				for _, h := range headers {
 					row = append(row, rec[h])
 				}
@@ -150,6 +144,68 @@ func (h *ObjectHandler) SelectObjectContent(w http.ResponseWriter, r *http.Reque
 		}
 		cw.Flush()
 	}
+
+	// SelectObjectContent returns an AWS event stream, not a raw body: SDKs
+	// (boto3, aws-cli, and every language SDK) parse framed Records/Stats/End
+	// messages and validate their CRCs. Returning raw CSV/JSON makes the feature
+	// unusable from any SDK, so frame the output here.
+	var scanned int64
+	if meta != nil {
+		scanned = meta.Size
+	}
+	out := payload.Bytes()
+	w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+	w.WriteHeader(http.StatusOK)
+	writeEventMessage(w, "Records", "application/octet-stream", out)
+	stats := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><Stats xmlns=""><BytesScanned>%d</BytesScanned><BytesProcessed>%d</BytesProcessed><BytesReturned>%d</BytesReturned></Stats>`,
+		scanned, scanned, len(out))
+	writeEventMessage(w, "Stats", "text/xml", []byte(stats))
+	writeEventMessage(w, "End", "", nil)
+}
+
+// writeEventMessage writes one AWS event-stream message: a 12-byte prelude
+// (total length, headers length, prelude CRC32), the encoded headers, the
+// payload, and a trailing message CRC32 over everything before it.
+func writeEventMessage(w io.Writer, eventType, contentType string, payload []byte) {
+	var headers bytes.Buffer
+	writeEventHeader(&headers, ":message-type", "event")
+	writeEventHeader(&headers, ":event-type", eventType)
+	if contentType != "" {
+		writeEventHeader(&headers, ":content-type", contentType)
+	}
+	hb := headers.Bytes()
+
+	totalLen := 12 + len(hb) + len(payload) + 4
+	msg := make([]byte, 0, totalLen)
+
+	var prelude [8]byte
+	binary.BigEndian.PutUint32(prelude[0:4], uint32(totalLen))
+	binary.BigEndian.PutUint32(prelude[4:8], uint32(len(hb)))
+	msg = append(msg, prelude[:]...)
+
+	var crcBuf [4]byte
+	binary.BigEndian.PutUint32(crcBuf[:], crc32.ChecksumIEEE(prelude[:]))
+	msg = append(msg, crcBuf[:]...) // prelude CRC
+
+	msg = append(msg, hb...)
+	msg = append(msg, payload...)
+
+	binary.BigEndian.PutUint32(crcBuf[:], crc32.ChecksumIEEE(msg))
+	msg = append(msg, crcBuf[:]...) // message CRC over everything above
+
+	w.Write(msg)
+}
+
+// writeEventHeader encodes one event-stream header: 1-byte name length, name,
+// 1-byte value type (7 = string), 2-byte big-endian value length, value.
+func writeEventHeader(buf *bytes.Buffer, name, value string) {
+	buf.WriteByte(byte(len(name)))
+	buf.WriteString(name)
+	buf.WriteByte(7)
+	var vl [2]byte
+	binary.BigEndian.PutUint16(vl[:], uint16(len(value)))
+	buf.Write(vl[:])
+	buf.WriteString(value)
 }
 
 // XML request types
@@ -271,6 +327,7 @@ func parseSQL(expr string) (*selectQuery, error) {
 }
 
 func stripS3Prefix(col string) string {
+	col = unwrapCast(col)
 	prefixes := []string{"s3object.", "s.", "s3object[", "s["}
 	lower := strings.ToLower(col)
 	for _, p := range prefixes {
@@ -278,10 +335,25 @@ func stripS3Prefix(col string) string {
 			col = col[len(p):]
 			// Handle bracket notation: s3object['name'] or s3object["name"]
 			col = strings.Trim(col, "[]'\"")
-			return col
+			return unwrapCast(col)
 		}
 	}
 	return col
+}
+
+// unwrapCast reduces CAST(expr AS type) to expr, so a query like
+// "WHERE CAST(age AS INT) > 28" resolves to the "age" column. Comparisons already
+// coerce numeric operands, so the cast target does not change the outcome.
+func unwrapCast(s string) string {
+	t := strings.TrimSpace(s)
+	if len(t) >= 6 && strings.EqualFold(t[:5], "CAST(") && strings.HasSuffix(t, ")") {
+		inner := t[5 : len(t)-1]
+		if idx := strings.LastIndex(strings.ToUpper(inner), " AS "); idx >= 0 {
+			inner = inner[:idx]
+		}
+		return strings.TrimSpace(inner)
+	}
+	return t
 }
 
 var condRe = regexp.MustCompile(`(?i)^(.+?)\s+(=|!=|<>|<=|>=|<|>|LIKE|NOT\s+LIKE|IS\s+NOT|IS)\s+(.+)$`)

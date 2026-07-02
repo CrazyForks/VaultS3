@@ -1,7 +1,7 @@
 # VaultS3 Helm Chart
 
-Deploy [VaultS3](https://github.com/Kodiqa-Solutions/VaultS3) — a lightweight,
-S3-compatible object store with a built-in dashboard — to Kubernetes.
+Deploy [VaultS3](https://github.com/Kodiqa-Solutions/VaultS3), a lightweight,
+S3-compatible object store with a built-in dashboard, to Kubernetes.
 
 VaultS3 runs as a **StatefulSet** with persistent volumes for object data
 (`/data`) and BoltDB metadata (`/metadata`). A single port (`9000`) serves the
@@ -38,10 +38,10 @@ kubectl -n vaults3 port-forward svc/vaults3 9000:9000
 | `auth.existingSecret` | `""` | Use your own Secret (keys `access-key`, `secret-key`). |
 | `config` | single-node config | The `vaults3.yaml` mounted at `/etc/vaults3/`. Replace to enable encryption/replication/erasure/etc. |
 | `existingConfigMap` | `""` | Use your own ConfigMap (key `vaults3.yaml`). |
-| `controller.kind` | `StatefulSet` | `StatefulSet` (default; required for clustering/multi-replica) or `Deployment` (single-node, standalone PVCs). |
+| `controller.kind` | `StatefulSet` | `StatefulSet` (default. Required for clustering/multi-replica) or `Deployment` (single-node, standalone PVCs). |
 | `persistence.enabled` | `true` | Keep enabled for real use. |
 | `persistence.data.size` | `50Gi` | Object-data PVC size. |
-| `persistence.data.existingClaim` | `""` | Mount a pre-existing data PVC (Deployment mode) — e.g. a restored backup. |
+| `persistence.data.existingClaim` | `""` | Mount a pre-existing data PVC (Deployment mode), e.g. a restored backup. |
 | `persistence.metadata.size` | `5Gi` | Metadata PVC size. |
 | `persistence.metadata.existingClaim` | `""` | Mount a pre-existing metadata PVC (Deployment mode). |
 | `service.type` | `ClusterIP` | Use `LoadBalancer` or an Ingress to expose. |
@@ -70,7 +70,7 @@ forces these via env vars anyway, so they always land on the PVCs).
 
 Set `cluster.enabled=true` with an **odd `replicaCount` ≥ 3** and the chart
 auto-forms a Raft cluster: pod-0 bootstraps as the initial leader and the other
-pods auto-join it over stable headless-service DNS — no manual bootstrap/join
+pods auto-join it over stable headless-service DNS, no manual bootstrap/join
 steps. Raft state lives on the metadata PVC, and a node re-joins automatically
 after a restart (its identity is the StatefulSet DNS name, not its pod IP).
 
@@ -84,12 +84,12 @@ kubectl -n vaults3 exec vaults3-0 -- wget -qO- http://localhost:9000/cluster/sta
 ```
 
 Metadata writes (buckets, objects, IAM, …) are committed through Raft consensus,
-so all nodes converge — and a write to **any** node works (a write to a follower
+so all nodes converge, and a write to **any** node works (a write to a follower
 is transparently forwarded to the leader). Reads are served locally.
 
 > **Beta.** Clustering is functional but newer and less battle-tested than
 > single-node + erasure coding. For maximum production durability today, prefer a
-> **single node with erasure coding** (disk redundancy) — validate clustering
+> **single node with erasure coding** (disk redundancy), validate clustering
 > against your workload before trusting it as the only copy of critical data. See
 [`docs/SCALING.md`](https://github.com/Kodiqa-Solutions/VaultS3/blob/main/docs/SCALING.md)
 for the redundancy trade-offs.
@@ -108,11 +108,11 @@ BoltDB file on `/metadata`, and they reference each other.
 
 - Back up **`/data` and `/metadata` together, from the same point in time.** A
   snapshot of one paired with a mismatched copy of the other can leave dangling
-  references. Atomic **CSI volume snapshots** are preferable to a live file copy;
+  references. Atomic **CSI volume snapshots** are preferable to a live file copy.
   if you must file-copy, quiescing writes (or a brief downtime) gives the cleanest
   result. BoltDB is crash-consistent, so a live snapshot is usually recoverable.
 - StatefulSet PVCs (`data-<release>-0`, `metadata-<release>-0`) are backed up by
-  Velero/k8up like any other PVC — clustering is not required to do so.
+  Velero/k8up like any other PVC, clustering is not required to do so.
 
 **Restoring into a known PVC** (the easiest restore workflow): run in
 **Deployment mode** and point the chart at the restored claims:
@@ -130,7 +130,7 @@ keep` annotation, so they survive `helm uninstall` and can be re-attached on
 reinstall.
 
 **App-level alternative:** VaultS3 also has a built-in backup (full/incremental)
-and bucket snapshots, which sidestep the cross-volume-consistency concern — see
+and bucket snapshots, which sidestep the cross-volume-consistency concern, see
 the main README.
 
 ## Uninstall
