@@ -1,11 +1,32 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { testMigrateSource, startMigration, listMigrateJobs, cancelMigration, type MigrateJob } from '../api/migrate'
 
+// Migration works against any S3-compatible source. These presets only pre-fill a
+// sensible endpoint hint and the SigV4 region for common sources, so the fields do
+// not have to be looked up by hand. Everything is still fully editable.
+const PRESETS: Record<string, { label: string; placeholder: string; region: string; hint?: string }> = {
+  custom: { label: 'Any S3-compatible', placeholder: 'http://host:9000', region: 'us-east-1' },
+  minio: { label: 'MinIO', placeholder: 'http://minio:9000', region: 'us-east-1' },
+  seaweedfs: { label: 'SeaweedFS', placeholder: 'http://seaweedfs:8333', region: 'us-east-1', hint: 'Point at the SeaweedFS S3 gateway (default port 8333).' },
+  garage: { label: 'Garage', placeholder: 'http://garage:3900', region: 'garage', hint: 'Region must match your Garage cluster config (garage.toml s3_api.s3_region), often "garage".' },
+  ceph: { label: 'Ceph RADOS Gateway', placeholder: 'http://ceph-rgw:8080', region: 'us-east-1' },
+  aws: { label: 'AWS S3', placeholder: 'https://s3.us-east-1.amazonaws.com', region: 'us-east-1', hint: 'Use the regional endpoint and its matching region.' },
+  r2: { label: 'Cloudflare R2', placeholder: 'https://<account-id>.r2.cloudflarestorage.com', region: 'auto', hint: 'R2 uses region "auto".' },
+  wasabi: { label: 'Wasabi', placeholder: 'https://s3.wasabisys.com', region: 'us-east-1' },
+  b2: { label: 'Backblaze B2', placeholder: 'https://s3.us-west-000.backblazeb2.com', region: 'us-west-000', hint: 'Use your bucket region, e.g. us-west-000.' },
+}
+
 export default function MigrationPage() {
+  const [preset, setPreset] = useState('custom')
   const [endpoint, setEndpoint] = useState('')
   const [accessKey, setAccessKey] = useState('')
   const [secretKey, setSecretKey] = useState('')
   const [region, setRegion] = useState('us-east-1')
+
+  const onPreset = (key: string) => {
+    setPreset(key)
+    setRegion(PRESETS[key].region)
+  }
 
   const [buckets, setBuckets] = useState<string[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -104,7 +125,8 @@ export default function MigrationPage() {
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Migrate from S3</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-          Import buckets and objects from MinIO, AWS S3, or any S3-compatible source.
+          Import buckets and objects from MinIO, SeaweedFS, Garage, Ceph, AWS S3,
+          Cloudflare R2, Wasabi, Backblaze B2, or any S3-compatible source.
         </p>
       </div>
 
@@ -119,8 +141,19 @@ export default function MigrationPage() {
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">1. Source endpoint</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
+            <label className={label}>Source type</label>
+            <select className={input} value={preset} onChange={e => onPreset(e.target.value)}>
+              {Object.entries(PRESETS).map(([key, p]) => (
+                <option key={key} value={key}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-2">
             <label className={label}>Endpoint URL</label>
-            <input className={input} placeholder="http://old-minio:9000" value={endpoint} onChange={e => setEndpoint(e.target.value)} />
+            <input className={input} placeholder={PRESETS[preset].placeholder} value={endpoint} onChange={e => setEndpoint(e.target.value)} />
+            {PRESETS[preset].hint && (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{PRESETS[preset].hint}</p>
+            )}
           </div>
           <div>
             <label className={label}>Access Key</label>

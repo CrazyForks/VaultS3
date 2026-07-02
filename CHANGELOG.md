@@ -6,6 +6,15 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-07-02
+### Added
+- **Migration source presets in the dashboard.** The Migrate wizard now has a source
+  type dropdown (MinIO, SeaweedFS, Garage, Ceph, AWS S3, Cloudflare R2, Wasabi,
+  Backblaze B2, or any S3-compatible) that pre-fills the endpoint hint and the SigV4
+  region, most importantly Garage's non-default region. The migrator already read any
+  S3-compatible source, so this is discoverability, not new migration logic. Verified
+  live against a real SeaweedFS S3 gateway and a real Garage cluster.
+
 ## [4.4.0] - 2026-07-02
 
 A correctness, WORM, and stability release from a real-world test pass (boto3
@@ -534,7 +543,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.0...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.1...HEAD
+[4.4.1]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.3.1...v4.4.0
 [4.3.1]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.3.0...v4.3.1
 [4.3.0]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.23...v4.3.0
