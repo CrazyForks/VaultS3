@@ -6,6 +6,78 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-07-02
+
+A correctness, WORM, and stability release from a real-world test pass (boto3
+against the core S3 API, advanced features, and the compression/encryption/packing
+engines) plus an audit of the high-risk packages. Every fix has a regression test.
+
+### Security
+- **Object lock (WORM) is now enforced on delete.** The non-versioned delete path
+  never checked retention or legal hold, so an object under a COMPLIANCE,
+  legal-hold, or non-bypassed GOVERNANCE lock could be permanently deleted. Deletes
+  of locked objects are now refused (with governance bypass honored), on both the
+  retention API and the inline `x-amz-object-lock-*` PUT headers.
+- **SigV4 auth no longer buffers the whole request body in memory.** Signature
+  building read the entire upload into RAM (even for `UNSIGNED-PAYLOAD`, where the
+  hash was discarded), so any caller with a valid access key could exhaust memory
+  and every large upload was buffered rather than streamed. The client signed
+  content hash is now used directly and the body streams through.
+- **Bucket quota can no longer be undercut via `X-Amz-Decoded-Content-Length`.** An
+  aws-chunked client could declare a tiny size to pass admission and then stream a
+  much larger object. Quota is re-checked against the real decoded size.
+
+### Fixed
+- **CompleteMultipartUpload could destroy an existing object.** On the default
+  (non-encrypted) path, assembly wrote straight to the final object path and removed
+  it on a missing part, truncating or deleting whatever was already stored there,
+  non-atomically, and shadowing packed-engine objects. Completion now assembles into
+  a temp file and writes through the engine, so it is atomic, wrapper-aware
+  (compression, encryption, packing), and never touches the target until the new
+  object is fully assembled.
+- **Range (206) responses no longer carry a whole-object checksum header.** Modern
+  SDKs (boto3 1.36+, aws-cli v2) validate `x-amz-checksum-*` against the bytes they
+  receive, so a whole-object checksum made every range download fail. The header is
+  now emitted only on full (200) responses.
+- **S3 Select now returns a proper AWS event stream.** It previously wrote raw
+  CSV/JSON, which no S3 SDK can parse (they fail on the event-stream prelude
+  checksum). Results are now framed as Records, Stats, and End messages with CRCs,
+  and `CAST(col AS TYPE)` in predicates is supported.
+- **Object lock buckets now behave like AWS.** Creating a bucket with object lock
+  enabled auto-enables versioning (required for object lock), inline lock headers are
+  applied on every PutObject path, and `GetObjectLockConfiguration` reports the true
+  state (404 when object lock is not configured) instead of always claiming Enabled.
+- **Dashboard bucket size/count no longer drift.** Version promote and delete now
+  adjust the cached counters by the correct delta, and the one-time backfill reads
+  the metadata index atomically, which is correct for versioned, compressed, and
+  encrypted buckets (an engine filesystem walk counted on-disk bytes and skipped
+  versioned data).
+- **Third-party-signed presigned URLs with spaces now verify.** The presigned
+  canonical query used Go's `+` for spaces instead of RFC 3986 `%20`, so a URL signed
+  by boto3/aws-cli whose query carried a space (for example a
+  `response-content-disposition` filename) failed verification.
+- **`x-amz-meta-*` metadata keys are returned lowercased**, matching AWS, rather than
+  Title-Cased.
+- **Cluster: a node no longer routes to a dead peer after a restart.** The reverse
+  proxy cache was keyed by node ID and never invalidated when a node's address
+  changed, so it kept forwarding to the old address forever. The cache entry is now
+  dropped when the address changes or the node leaves.
+- **Backups can no longer run twice concurrently.** The scheduler used a
+  load-then-store check instead of a compare-and-swap, so two triggers (or a trigger
+  racing the ticker) could both start and write the same target directory.
+- **Small-file packing: reads no longer fail during a volume roll.** `readFrame`
+  released the lock between capturing the active file handle and reading it, so a
+  concurrent roll could close the handle mid-read. The read now holds the lock and
+  falls back to opening the sealed volume by path.
+- **In-flight upload temp files (`.vaults3-tmp-*`) are excluded** from object listing
+  and bucket-size walks.
+
+### Added
+- **ListObjectsV2 delimiter support.** The V2 listing now honors `delimiter` and
+  returns `CommonPrefixes`, so folder-style browsing works for aws-cli, SDK
+  paginators, and the dashboard file browser. The grouping is done at the sorted
+  metadata index so it stays O(page) for large prefixes.
+
 ## [4.3.1] - 2026-06-30
 ### Fixed
 - **CRITICAL: `aws-chunked` (streaming) uploads were stored corrupted.** Modern AWS
@@ -462,7 +534,12 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.21...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.3.1...v4.4.0
+[4.3.1]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.3.0...v4.3.1
+[4.3.0]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.23...v4.3.0
+[4.2.23]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.22...v4.2.23
+[4.2.22]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.21...v4.2.22
 [4.2.21]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.20...v4.2.21
 [4.2.20]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.19...v4.2.20
 [4.2.19]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.2.18...v4.2.19
