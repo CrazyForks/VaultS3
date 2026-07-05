@@ -39,6 +39,10 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error || res.statusText)
   }
+  // Tolerate empty success bodies (e.g. 204, or a 200 with no content from an
+  // action endpoint). Calling res.json() on an empty body throws a SyntaxError
+  // (which WebKit surfaces as "The string did not match the expected pattern").
   if (res.status === 204) return undefined as T
-  return res.json()
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }

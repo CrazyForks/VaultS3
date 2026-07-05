@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { getToken, setToken, clearToken } from './client'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { getToken, setToken, clearToken, apiFetch } from './client'
 
 // A minimal in-memory Web Storage so the test does not depend on a DOM env.
 function createStorage(): Storage {
@@ -62,5 +62,36 @@ describe('token storage', () => {
 
   it('getToken returns null when nothing is stored', () => {
     expect(getToken()).toBeNull()
+  })
+})
+
+// Regression for issue #23: attach-policy / add-to-group return a success status
+// with an EMPTY body. apiFetch must not call res.json() on an empty body (that
+// throws a SyntaxError, surfaced by WebKit as "The string did not match the
+// expected pattern"), which broke those dashboard actions on Safari.
+describe('apiFetch empty-body handling', () => {
+  beforeEach(() => {
+    globalThis.localStorage = createStorage()
+    globalThis.sessionStorage = createStorage()
+  })
+
+  it('resolves undefined for a 200 with an empty body (does not throw)', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('', { status: 200 })) as unknown as typeof fetch
+    await expect(apiFetch('/iam/users/admin/policies', { method: 'POST' })).resolves.toBeUndefined()
+  })
+
+  it('resolves undefined for a 204 No Content', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    await expect(apiFetch('/iam/users/admin/policies/p', { method: 'DELETE' })).resolves.toBeUndefined()
+  })
+
+  it('still parses a JSON body on a 200 with content', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ name: 'admin' }), { status: 200 })) as unknown as typeof fetch
+    await expect(apiFetch('/iam/users/admin')).resolves.toEqual({ name: 'admin' })
+  })
+
+  it('throws the server error message on a non-ok response', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'policy not found' }), { status: 404 })) as unknown as typeof fetch
+    await expect(apiFetch('/iam/users/admin/policies', { method: 'POST' })).rejects.toThrow('policy not found')
   })
 })

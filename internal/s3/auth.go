@@ -308,7 +308,12 @@ func (a *Authenticator) Authorize(identity *iam.Identity, action, resource strin
 
 func parseAuthParams(s string) map[string]string {
 	params := make(map[string]string)
-	for _, part := range strings.Split(s, ", ") {
+	// Split on comma only, not ", ": the SigV4 Authorization header separates its
+	// components with commas and OPTIONAL whitespace. Standard SDKs (boto3, aws-cli)
+	// add a space after the comma, but some clients (WinSCP, S3 Browser, others) do
+	// not. None of the three values (Credential, SignedHeaders, Signature) ever
+	// contains a comma, so splitting on "," and trimming is safe for both forms.
+	for _, part := range strings.Split(s, ",") {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) == 2 {
 			params[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])

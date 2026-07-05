@@ -6,6 +6,19 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.4] - 2026-07-05
+### Fixed
+- **S3 clients that omit the space after commas in the SigV4 Authorization header
+  now authenticate** (issue #22). The header parser split on `", "` only, so clients
+  like WinSCP and S3 Browser, which send `Credential=...,SignedHeaders=...,Signature=...`
+  without spaces, failed with "missing auth parameters" and a 403. The parser now
+  accepts commas with or without surrounding whitespace, per the SigV4 spec.
+- **Dashboard IAM actions no longer error with "The string did not match the expected
+  pattern"** (issue #23). Attaching a policy to a user, adding a user to a group, and
+  attaching a policy to a group returned HTTP 200 with an empty body, and the dashboard
+  parsed that empty body as JSON (which throws on Safari/WebKit). Those actions now
+  return 204 No Content, and the dashboard tolerates empty success bodies.
+
 ## [4.4.3] - 2026-07-05
 ### Added
 - **Login page improvements.** A remember-me option, a show/hide toggle for the secret
@@ -564,7 +577,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.3...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.4...HEAD
+[4.4.4]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.3...v4.4.4
 [4.4.3]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.2...v4.4.3
 [4.4.2]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.1...v4.4.2
 [4.4.1]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.0...v4.4.1

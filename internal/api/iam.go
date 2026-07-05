@@ -137,7 +137,7 @@ func (h *APIHandler) handleAttachUserPolicy(w http.ResponseWriter, r *http.Reque
 	// Avoid duplicates
 	for _, p := range user.PolicyARNs {
 		if p == req.PolicyName {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 	}
@@ -147,7 +147,7 @@ func (h *APIHandler) handleAttachUserPolicy(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandler) handleDetachUserPolicy(w http.ResponseWriter, _ *http.Request, userName, policyName string) {
@@ -194,7 +194,7 @@ func (h *APIHandler) handleAddUserToGroup(w http.ResponseWriter, r *http.Request
 
 	for _, g := range user.Groups {
 		if g == req.GroupName {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 	}
@@ -204,7 +204,7 @@ func (h *APIHandler) handleAddUserToGroup(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandler) handleRemoveUserFromGroup(w http.ResponseWriter, _ *http.Request, userName, groupName string) {
@@ -314,7 +314,7 @@ func (h *APIHandler) handleAttachGroupPolicy(w http.ResponseWriter, r *http.Requ
 
 	for _, p := range group.PolicyARNs {
 		if p == req.PolicyName {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 	}
@@ -324,7 +324,7 @@ func (h *APIHandler) handleAttachGroupPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *APIHandler) handleDetachGroupPolicy(w http.ResponseWriter, _ *http.Request, groupName, policyName string) {
@@ -439,5 +439,5 @@ func (h *APIHandler) handleSetIPRestrictions(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
