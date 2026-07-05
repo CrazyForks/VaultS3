@@ -6,6 +6,13 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.3] - 2026-07-05
+### Added
+- **Login page improvements.** A remember-me option, a show/hide toggle for the secret
+  key, and a dark-mode toggle on the login screen. When remember-me is left unchecked
+  the session token is now kept only for the tab session and cleared when the tab
+  closes, instead of always persisting. Contributed by @idpcks in #21.
+
 ## [4.4.2] - 2026-07-05
 ### Added
 - **File browser grid view.** The object browser has a new grid layout with file-type
@@ -557,7 +564,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.2...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.3...HEAD
+[4.4.3]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.2...v4.4.3
 [4.4.2]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.1...v4.4.2
 [4.4.1]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.3.1...v4.4.0
