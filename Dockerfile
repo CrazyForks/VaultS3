@@ -1,5 +1,9 @@
 # Stage 1: Build frontend
-FROM node:20-alpine AS frontend
+# Pin to the native build platform: the dashboard output is static, arch-independent
+# HTML/CSS/JS, so there is no reason to build it under QEMU emulation for arm64. This
+# also avoids the npm optional native-dependency resolution bug (e.g. lightningcss) that
+# breaks emulated arm64 installs.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
