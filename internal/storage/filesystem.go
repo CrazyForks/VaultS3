@@ -26,6 +26,26 @@ func (fs *FileSystem) DataDir() string {
 	return fs.dataDir
 }
 
+// IsDirMarker reports whether key denotes an S3 "directory marker": a zero-byte
+// object whose key ends in "/" (created by s3fs, MinIO folders, and folder
+// uploads). Such an object must map to a real directory so child objects nest
+// under it. Storing it as a regular file blocks the child directory and fails
+// with ENOTDIR ("not a directory").
+func IsDirMarker(key string) bool {
+	return strings.HasSuffix(key, "/")
+}
+
+// emptyContentETag is the MD5 ETag of empty content, returned for directory
+// markers (which hold no bytes).
+const emptyContentETag = `"d41d8cd98f00b204e9800998ecf8427e"`
+
+// emptyMarker is the zero-byte content of a directory marker.
+type emptyMarker struct{}
+
+func (emptyMarker) Read([]byte) (int, error)       { return 0, io.EOF }
+func (emptyMarker) Seek(int64, int) (int64, error) { return 0, nil }
+func (emptyMarker) Close() error                   { return nil }
+
 func (fs *FileSystem) ObjectPath(bucket, key string) string {
 	return fs.objectPath(bucket, key)
 }
@@ -63,6 +83,17 @@ func (fs *FileSystem) DeleteBucketDir(bucket string) error {
 }
 
 func (fs *FileSystem) PutObject(bucket, key string, reader io.Reader, size int64) (int64, string, error) {
+	if IsDirMarker(key) {
+		// Create the directory so child objects nest under it. The marker holds
+		// no bytes and is tracked in the metadata store, so there is no file to
+		// collide with the child directory.
+		if err := os.MkdirAll(fs.objectPath(bucket, key), 0755); err != nil {
+			return 0, "", fmt.Errorf("create dir marker: %w", err)
+		}
+		io.Copy(io.Discard, reader) // drain any (empty) body
+		return 0, emptyContentETag, nil
+	}
+
 	objPath := fs.objectPath(bucket, key)
 
 	if err := os.MkdirAll(filepath.Dir(objPath), 0755); err != nil {
@@ -99,6 +130,10 @@ func (fs *FileSystem) PutObject(bucket, key string, reader io.Reader, size int64
 }
 
 func (fs *FileSystem) GetObject(bucket, key string) (ReadSeekCloser, int64, error) {
+	if IsDirMarker(key) {
+		return emptyMarker{}, 0, nil
+	}
+
 	objPath := fs.objectPath(bucket, key)
 
 	info, err := os.Stat(objPath)
@@ -118,6 +153,18 @@ func (fs *FileSystem) GetObject(bucket, key string) (ReadSeekCloser, int64, erro
 }
 
 func (fs *FileSystem) DeleteObject(bucket, key string) error {
+	if IsDirMarker(key) {
+		// Remove the directory only if empty. If child objects remain, the
+		// directory must stay and only the marker's metadata is removed (by the
+		// caller); os.Remove refuses a non-empty directory, which we treat as
+		// success.
+		if err := os.Remove(fs.objectPath(bucket, key)); err != nil && !os.IsNotExist(err) {
+			// "directory not empty" (children still present) is expected and fine.
+			return nil
+		}
+		return nil
+	}
+
 	objPath := fs.objectPath(bucket, key)
 	err := os.Remove(objPath)
 	if err != nil && !os.IsNotExist(err) {

@@ -6,6 +6,17 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.6] - 2026-07-08
+### Fixed
+- **Directory-marker objects (keys ending in `/`) no longer corrupt folders or
+  break migration and s3fs.** Zero-byte "folder" objects created by s3fs, MinIO,
+  and folder uploads were stored as regular files, which then blocked every child
+  object under that prefix and failed with `mkdir ...: not a directory` (ENOTDIR).
+  Such keys are now stored as real directories so children nest correctly, read
+  back as empty objects, and delete cleanly. This affects all storage engines
+  (plain, compressed, encrypted, per-bucket, KMS, erasure). Despite the report
+  naming FreeBSD, the bug was OS-agnostic.
+
 ## [4.4.5] - 2026-07-07
 ### Added
 - **Migration is now resumable and parallel** (issue #24). A migration that stops
@@ -586,7 +597,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.5...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.6...HEAD
+[4.4.6]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.5...v4.4.6
 [4.4.5]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.4...v4.4.5
 [4.4.4]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.3...v4.4.4
 [4.4.3]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.2...v4.4.3

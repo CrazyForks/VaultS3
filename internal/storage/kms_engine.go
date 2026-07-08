@@ -34,6 +34,9 @@ func (e *KMSEncryptedEngine) DeleteBucketDir(bucket string) error {
 }
 
 func (e *KMSEncryptedEngine) PutObject(bucket, key string, reader io.Reader, size int64) (int64, string, error) {
+	if IsDirMarker(key) {
+		return e.inner.PutObject(bucket, key, reader, size)
+	}
 	if size > maxEncryptedSize {
 		return 0, "", fmt.Errorf("object too large for encryption (max %dMB)", maxEncryptedSize/(1024*1024))
 	}
@@ -56,6 +59,9 @@ func (e *KMSEncryptedEngine) PutObject(bucket, key string, reader io.Reader, siz
 }
 
 func (e *KMSEncryptedEngine) GetObject(bucket, key string) (ReadSeekCloser, int64, error) {
+	if IsDirMarker(key) {
+		return e.inner.GetObject(bucket, key)
+	}
 	reader, _, err := e.inner.GetObject(bucket, key)
 	if err != nil {
 		return nil, 0, err

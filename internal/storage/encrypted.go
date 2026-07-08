@@ -49,6 +49,10 @@ func (e *EncryptedEngine) DeleteBucketDir(bucket string) error {
 const maxEncryptedSize int64 = 1 * 1024 * 1024 * 1024
 
 func (e *EncryptedEngine) PutObject(bucket, key string, reader io.Reader, size int64) (int64, string, error) {
+	if IsDirMarker(key) {
+		// Directory markers hold no bytes; store as a plain directory, no crypto.
+		return e.inner.PutObject(bucket, key, reader, size)
+	}
 	if size > maxEncryptedSize {
 		return 0, "", fmt.Errorf("object too large for encryption (max %dMB)", maxEncryptedSize/(1024*1024))
 	}
@@ -80,6 +84,9 @@ func (e *EncryptedEngine) PutObject(bucket, key string, reader io.Reader, size i
 }
 
 func (e *EncryptedEngine) GetObject(bucket, key string) (ReadSeekCloser, int64, error) {
+	if IsDirMarker(key) {
+		return e.inner.GetObject(bucket, key)
+	}
 	reader, _, err := e.inner.GetObject(bucket, key)
 	if err != nil {
 		return nil, 0, err

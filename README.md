@@ -81,7 +81,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 
 ## Features
 
-- **S3-compatible API**: Works with any S3 client (AWS CLI, mc, boto3, minio-js)
+- **S3-compatible API**: Works with any S3 client (AWS CLI, mc, boto3, minio-js, s3fs), including directory-marker objects (`folder/` keys) so tools that represent folders as zero-byte objects work correctly
 - **Single binary**: One file, no runtime dependencies, no Docker required
 - **Low memory**: Targets <80MB RAM (vs MinIO's 300-500MB)
 - **BoltDB metadata**: Embedded key-value store, no external database needed

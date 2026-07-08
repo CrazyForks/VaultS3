@@ -61,7 +61,7 @@ func (c *CompressedEngine) DeleteBucketDir(bucket string) error {
 }
 
 func (c *CompressedEngine) PutObject(bucket, key string, reader io.Reader, size int64) (int64, string, error) {
-	if !c.shouldCompress(key) {
+	if IsDirMarker(key) || !c.shouldCompress(key) {
 		return c.inner.PutObject(bucket, key, reader, size)
 	}
 	return c.compressAndPut(reader, func(compressed io.Reader, compressedSize int64) (int64, string, error) {
@@ -70,7 +70,7 @@ func (c *CompressedEngine) PutObject(bucket, key string, reader io.Reader, size 
 }
 
 func (c *CompressedEngine) GetObject(bucket, key string) (ReadSeekCloser, int64, error) {
-	if !c.shouldCompress(key) {
+	if IsDirMarker(key) || !c.shouldCompress(key) {
 		return c.inner.GetObject(bucket, key)
 	}
 	return c.getAndDecompress(func() (ReadSeekCloser, int64, error) {
