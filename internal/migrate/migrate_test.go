@@ -742,3 +742,45 @@ func TestMigrateResumePartial(t *testing.T) {
 		}
 	}
 }
+
+// TestSourceSlowBodyNotTimedOut verifies issue #26: the source client no longer
+// caps the whole request (including reading the body) with a total timeout, so a
+// large object whose body takes longer than the (former) timeout to stream is
+// not killed with "context deadline exceeded ... while reading body". The client
+// only bounds time-to-first-byte now.
+func TestSourceSlowBodyNotTimedOut(t *testing.T) {
+	const chunks = 6
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Headers arrive immediately; the body then streams slowly for ~1.5s.
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("responsewriter is not a flusher")
+			return
+		}
+		fl.Flush()
+		for i := 0; i < chunks; i++ {
+			w.Write([]byte("chunkdata"))
+			fl.Flush()
+			time.Sleep(250 * time.Millisecond)
+		}
+	}))
+	defer srv.Close()
+
+	// timeoutSecs=1: the total body read (~1.5s) exceeds it. With the old
+	// http.Client.Timeout this would fail; now it only bounds the response header.
+	src := NewSource(srv.URL, "k", "s", "us-east-1", 1)
+	obj, err := src.GetObject("bucket", "key")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer obj.Body.Close()
+	data, err := io.ReadAll(obj.Body)
+	if err != nil {
+		t.Fatalf("read slow body: %v", err)
+	}
+	if want := chunks * len("chunkdata"); len(data) != want {
+		t.Fatalf("read %d bytes, want %d", len(data), want)
+	}
+}

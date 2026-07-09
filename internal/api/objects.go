@@ -192,9 +192,13 @@ func (h *APIHandler) handleUpload(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Max 100MB per request
-	if err := r.ParseMultipartForm(100 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse upload")
+	// Stream each file part straight to storage. ParseMultipartForm buffered the
+	// whole request body to a temp file first, which fails for very large uploads
+	// when the temp dir fills (issue #26). A MultipartReader streams part by part,
+	// so a 100GB file needs no temp space and is not copied twice.
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read upload")
 		return
 	}
 
@@ -202,90 +206,108 @@ func (h *APIHandler) handleUpload(w http.ResponseWriter, r *http.Request, bucket
 	versioning, _ := h.store.GetBucketVersioning(bucket)
 	var results []uploadResult
 
-	for _, fileHeaders := range r.MultipartForm.File {
-		for _, fh := range fileHeaders {
-			file, err := fh.Open()
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "failed to read upload part")
+			return
+		}
+		// part.FileName() applies filepath.Base, which strips the directory and
+		// flattens folder uploads. Read the raw filename from Content-Disposition
+		// so a relative path (webkitRelativePath) is preserved as the object key.
+		// validateObjectKey below blocks any ".." traversal.
+		filename := part.FileName()
+		if _, params, perr := mime.ParseMediaType(part.Header.Get("Content-Disposition")); perr == nil {
+			if raw := params["filename"]; raw != "" {
+				filename = strings.TrimLeft(strings.ReplaceAll(raw, "\\", "/"), "/")
+			}
+		}
+		if filename == "" {
+			part.Close() // a plain form field, not a file
+			continue
+		}
+
+		key := prefix + filename
+		if err := validateObjectKey(key); err != nil {
+			part.Close()
+			continue
+		}
+
+		// Detect content type up front.
+		ct := part.Header.Get("Content-Type")
+		if ct == "" || ct == "application/octet-stream" {
+			if detected := mime.TypeByExtension(filepath.Ext(key)); detected != "" {
+				ct = detected
+			} else {
+				ct = "application/octet-stream"
+			}
+		}
+
+		// In a cluster, place each file on the node that owns its key (by hash
+		// ring) so the data lands where an S3 GET will look for it. The owner
+		// stores it and records the metadata (which replicates via Raft).
+		if h.clusterOwner != nil {
+			if ownerAddr, remote := h.clusterOwner(bucket, key); remote {
+				written, ferr := h.forwardUpload(ownerAddr, bucket, prefix, filename, ct, part)
+				part.Close()
+				if ferr != nil {
+					continue
+				}
+				results = append(results, uploadResult{Key: key, Size: written, ContentType: ct})
+				continue
+			}
+		}
+
+		now := time.Now().UTC().Unix()
+		var written int64
+		var etag string
+
+		// size -1: the part is streamed, so its length is unknown up front; the
+		// engine reports the actual bytes written.
+		if versioning == "Enabled" {
+			// Versioned bucket: write a new version so the object has history
+			// (and is snapshot/restore-able), mirroring the S3 PutObject path.
+			versionID := genVersionID()
+			written, etag, err = h.engine.PutObjectVersion(bucket, key, versionID, part, -1)
+			part.Close()
 			if err != nil {
 				continue
 			}
-
-			key := prefix + fh.Filename
-			if err := validateObjectKey(key); err != nil {
-				file.Close()
+			if old, e := h.store.GetObjectMeta(bucket, key); e == nil && old.VersionID != "" {
+				old.IsLatest = false
+				h.store.PutObjectVersion(*old)
+			}
+			meta := metadata.ObjectMeta{
+				Bucket: bucket, Key: key, ContentType: ct, ETag: etag, Size: written,
+				LastModified: now, VersionID: versionID, IsLatest: true,
+			}
+			h.store.PutObjectVersion(meta)
+			h.store.PutObjectMeta(meta)
+			if h.onReplication != nil {
+				h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, versionID)
+			}
+		} else {
+			written, etag, err = h.engine.PutObject(bucket, key, part, -1)
+			part.Close()
+			if err != nil {
 				continue
 			}
-
-			// Detect content type up front.
-			ct := fh.Header.Get("Content-Type")
-			if ct == "" || ct == "application/octet-stream" {
-				if detected := mime.TypeByExtension(filepath.Ext(key)); detected != "" {
-					ct = detected
-				} else {
-					ct = "application/octet-stream"
-				}
-			}
-
-			// In a cluster, place each file on the node that owns its key (by hash
-			// ring) so the data lands where an S3 GET will look for it. The owner
-			// stores it and records the metadata (which replicates via Raft).
-			if h.clusterOwner != nil {
-				if ownerAddr, remote := h.clusterOwner(bucket, key); remote {
-					written, err := h.forwardUpload(ownerAddr, bucket, prefix, fh.Filename, ct, file)
-					file.Close()
-					if err != nil {
-						continue
-					}
-					results = append(results, uploadResult{Key: key, Size: written, ContentType: ct})
-					continue
-				}
-			}
-
-			now := time.Now().UTC().Unix()
-			var written int64
-			var etag string
-
-			if versioning == "Enabled" {
-				// Versioned bucket: write a new version so the object has history
-				// (and is snapshot/restore-able), mirroring the S3 PutObject path.
-				versionID := genVersionID()
-				written, etag, err = h.engine.PutObjectVersion(bucket, key, versionID, file, fh.Size)
-				file.Close()
-				if err != nil {
-					continue
-				}
-				if old, e := h.store.GetObjectMeta(bucket, key); e == nil && old.VersionID != "" {
-					old.IsLatest = false
-					h.store.PutObjectVersion(*old)
-				}
-				meta := metadata.ObjectMeta{
-					Bucket: bucket, Key: key, ContentType: ct, ETag: etag, Size: written,
-					LastModified: now, VersionID: versionID, IsLatest: true,
-				}
-				h.store.PutObjectVersion(meta)
-				h.store.PutObjectMeta(meta)
-				if h.onReplication != nil {
-					h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, versionID)
-				}
-			} else {
-				written, etag, err = h.engine.PutObject(bucket, key, file, fh.Size)
-				file.Close()
-				if err != nil {
-					continue
-				}
-				h.store.PutObjectMeta(metadata.ObjectMeta{
-					Bucket: bucket, Key: key, ContentType: ct, ETag: etag, Size: written, LastModified: now,
-				})
-				if h.onReplication != nil {
-					h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, "")
-				}
-			}
-
-			results = append(results, uploadResult{
-				Key:         key,
-				Size:        written,
-				ContentType: ct,
+			h.store.PutObjectMeta(metadata.ObjectMeta{
+				Bucket: bucket, Key: key, ContentType: ct, ETag: etag, Size: written, LastModified: now,
 			})
+			if h.onReplication != nil {
+				h.onReplication("s3:ObjectCreated:Put", bucket, key, written, etag, "")
+			}
 		}
+
+		results = append(results, uploadResult{
+			Key:         key,
+			Size:        written,
+			ContentType: ct,
+		})
 	}
 
 	if results == nil {

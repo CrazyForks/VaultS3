@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -43,13 +44,27 @@ func NewSource(endpoint, accessKey, secretKey, region string, timeoutSecs int) *
 		accessKey: accessKey,
 		secretKey: secretKey,
 		region:    region,
+		// No overall http.Client.Timeout: it caps the WHOLE request including
+		// reading the response body, so a large object (tens of GB) that takes
+		// longer than the timeout to download fails with "context deadline
+		// exceeded ... while reading body" (issue #26). Instead we bound the parts
+		// that indicate a dead or stalled source — connect, TLS, and time-to-first
+		// -byte — while letting a legitimately long body stream for as long as it
+		// needs. timeoutSecs is used as the response-header (time-to-first-byte)
+		// budget.
 		client: &http.Client{
-			Timeout: time.Duration(timeoutSecs) * time.Second,
-			// Copy object bytes verbatim. Without this, Go transparently gunzips a
-			// response with Content-Encoding: gzip — which would store DECODED bytes
-			// while we record Content-Encoding: gzip (corruption) and also strips the
-			// header we want to preserve (issue #13).
-			Transport: &http.Transport{DisableCompression: true},
+			Transport: &http.Transport{
+				// Copy object bytes verbatim. Without this, Go transparently gunzips a
+				// response with Content-Encoding: gzip — which would store DECODED bytes
+				// while we record Content-Encoding: gzip (corruption) and also strips the
+				// header we want to preserve (issue #13).
+				DisableCompression:    true,
+				DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ResponseHeaderTimeout: time.Duration(timeoutSecs) * time.Second,
+				ExpectContinueTimeout: 5 * time.Second,
+				IdleConnTimeout:       90 * time.Second,
+			},
 		},
 	}
 }

@@ -6,6 +6,21 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.7] - 2026-07-09
+### Fixed
+- **Large-file migration no longer times out** (issue #26). The migration source
+  client used a single total request timeout that also capped reading the response
+  body, so any object that took longer than the timeout to download failed with
+  "context deadline exceeded ... while reading body". The client now bounds only
+  connect, TLS, and time-to-first-byte, letting a large object body (tens of GB)
+  stream for as long as it needs.
+- **Large-file dashboard uploads no longer fail, and folder uploads keep their
+  structure** (issue #26). The upload handler buffered the entire request body to
+  a temp file before writing to storage, which failed for very large files when
+  the temp dir filled. It now streams each part straight to storage (no temp
+  buffering, no double copy). It also preserves the relative folder path in the
+  filename instead of flattening subfolders to the base name.
+
 ## [4.4.6] - 2026-07-08
 ### Fixed
 - **Directory-marker objects (keys ending in `/`) no longer corrupt folders or
@@ -597,7 +612,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.6...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.7...HEAD
+[4.4.7]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.6...v4.4.7
 [4.4.6]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.5...v4.4.6
 [4.4.5]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.4...v4.4.5
 [4.4.4]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.3...v4.4.4
