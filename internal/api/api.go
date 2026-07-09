@@ -367,6 +367,10 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/version" && r.Method == http.MethodGet:
 		h.handleVersion(w, r)
 
+	// System / capacity overview (version, disk total/used/free, object usage)
+	case path == "/system" && r.Method == http.MethodGet:
+		h.handleSystemInfo(w, r)
+
 	// Cost estimator (TCO vs managed clouds)
 	case path == "/tco" && r.Method == http.MethodGet:
 		h.handleTCO(w, r)

@@ -31,3 +31,18 @@ export interface Stats {
 export function getStats(): Promise<Stats> {
   return apiFetch<Stats>('/stats')
 }
+
+export interface SystemInfo {
+  version: string
+  os: string
+  arch: string
+  dataDirs: string[]
+  disk: { totalBytes: number; usedBytes: number; freeBytes: number }
+  objectBytes: number
+  objectCount: number
+  bucketCount: number
+}
+
+export function getSystemInfo(): Promise<SystemInfo> {
+  return apiFetch<SystemInfo>('/system')
+}

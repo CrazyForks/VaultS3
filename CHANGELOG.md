@@ -6,6 +6,16 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.9] - 2026-07-09
+### Added
+- **Server and storage-capacity overview.** A new `GET /api/v1/system` endpoint
+  reports the version, data directories, on-disk capacity (total / used / free,
+  aggregated across the distinct filesystems backing the data, cold-tier, and
+  erasure directories), and logical object usage. The dashboard Stats page shows a
+  capacity bar, and `vaults3-cli info` prints the same overview. This is the
+  single-node answer to "how much capacity is there and how much is occupied"
+  (a lightweight equivalent of the capacity numbers `mc admin info` shows).
+
 ## [4.4.8] - 2026-07-09
 ### Added
 - **Lifecycle rule to abort incomplete multipart uploads** (issue #28). A bucket
@@ -623,7 +633,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.8...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.9...HEAD
+[4.4.9]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.8...v4.4.9
 [4.4.8]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.7...v4.4.8
 [4.4.7]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.6...v4.4.7
 [4.4.6]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.5...v4.4.6

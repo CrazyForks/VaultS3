@@ -82,6 +82,8 @@ func main() {
 	cmdArgs := args[1:]
 
 	switch cmd {
+	case "info":
+		runInfo(cmdArgs)
 	case "bucket":
 		runBucket(cmdArgs)
 	case "object":
@@ -116,6 +118,7 @@ Global Flags:
   --version, -v        Show version
 
 Commands:
+  info                 Server version and storage capacity (used/free/total)
   bucket               Bucket operations (list, create, delete, info)
   object               Object operations (ls, put, get, rm, cp, presign)
   user                 IAM user operations (list, create, delete, attach-policy)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { getStats, type Stats } from '../api/stats'
+import { getStats, getSystemInfo, type Stats, type SystemInfo } from '../api/stats'
 import { getActivity, type ActivityEntry } from '../api/activity'
 import BarChart from '../components/BarChart'
 import DonutChart from '../components/DonutChart'
@@ -10,6 +10,7 @@ const REFRESH_INTERVAL = 30000 // 30s
 
 export default function StatsPage() {
   const [stats, setStats] = useState<Stats | null>(null)
+  const [sys, setSys] = useState<SystemInfo | null>(null)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -17,8 +18,9 @@ export default function StatsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [s, a] = await Promise.all([getStats(), getActivity(100)])
+      const [s, a, si] = await Promise.all([getStats(), getActivity(100), getSystemInfo().catch(() => null)])
       setStats(s)
+      setSys(si)
       setActivity(a || [])
       setError('')
     } catch (err) {
@@ -102,6 +104,37 @@ export default function StatsPage() {
         <StatCard label="Buckets" value={String(stats.totalBuckets)} />
         <StatCard label="Uptime" value={formatUptime(stats.uptimeSeconds)} />
       </div>
+
+      {/* Disk capacity */}
+      {sys && sys.disk.totalBytes > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Storage Capacity</h3>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {sys.version} &middot; {sys.os}/{sys.arch}
+            </span>
+          </div>
+          <div className="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+            <div
+              className={`h-full rounded-full ${
+                sys.disk.usedBytes / sys.disk.totalBytes > 0.9 ? 'bg-red-500' : 'bg-indigo-500'
+              }`}
+              style={{ width: `${Math.min(100, (sys.disk.usedBytes / sys.disk.totalBytes) * 100).toFixed(1)}%` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
+            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(sys.disk.usedBytes)}</span> used</span>
+            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(sys.disk.freeBytes)}</span> free</span>
+            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(sys.disk.totalBytes)}</span> total on disk</span>
+            <span className="text-gray-400 dark:text-gray-500">{formatSize(sys.objectBytes)} in {sys.objectCount} object{sys.objectCount !== 1 ? 's' : ''} (logical)</span>
+          </div>
+          {sys.dataDirs.length > 0 && (
+            <div className="mt-1 text-[11px] text-gray-400 dark:text-gray-500 font-mono truncate" title={sys.dataDirs.join(', ')}>
+              {sys.dataDirs.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Request stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
