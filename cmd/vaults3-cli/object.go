@@ -20,7 +20,7 @@ func runObject(args []string) {
 		fmt.Println(`Usage: vaults3-cli object <subcommand>
 
 Subcommands:
-  ls <bucket> [--prefix=<prefix>] [--max-keys=<n>]   List objects
+  ls <bucket> [--prefix=<p>] [--recursive] [--max-keys=<n>]   List objects (folders + leaves; --recursive for all nested; paginates past 1000)
   put <bucket> <key> <file>                           Upload object
   get <bucket> <key> <file>                           Download object
   rm <bucket> <key>                                   Delete object
@@ -55,57 +55,115 @@ func objectList(args []string) {
 	}
 	bucket := args[0]
 	prefix := ""
-	maxKeys := 1000
+	recursive := false
+	limit := 0 // 0 = list everything (paginating past the server's 1000-per-page cap)
 
 	for _, arg := range args[1:] {
-		if strings.HasPrefix(arg, "--prefix=") {
+		switch {
+		case strings.HasPrefix(arg, "--prefix="):
 			prefix = strings.TrimPrefix(arg, "--prefix=")
-		} else if strings.HasPrefix(arg, "--max-keys=") {
-			n, err := strconv.Atoi(strings.TrimPrefix(arg, "--max-keys="))
-			if err == nil {
-				maxKeys = n
+		case arg == "--recursive" || arg == "-r":
+			recursive = true
+		case strings.HasPrefix(arg, "--max-keys="):
+			if n, err := strconv.Atoi(strings.TrimPrefix(arg, "--max-keys=")); err == nil {
+				limit = n
 			}
 		}
 	}
 
-	path := fmt.Sprintf("/%s?list-type=2&max-keys=%d", bucket, maxKeys)
-	if prefix != "" {
-		path += "&prefix=" + url.QueryEscape(prefix)
+	// Default behaviour matches `mc ls`: a "/" delimiter collapses each level into
+	// folders (CommonPrefixes) and shows only immediate objects. --recursive drops
+	// the delimiter for a full nested listing.
+	delimiter := "/"
+	if recursive {
+		delimiter = ""
 	}
 
-	resp, err := s3Request("GET", path, nil)
-	if err != nil {
-		fatal(err.Error())
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)))
+	type contentT struct {
+		Key          string `xml:"Key"`
+		Size         int64  `xml:"Size"`
+		LastModified string `xml:"LastModified"`
+		ETag         string `xml:"ETag"`
 	}
 
-	var result struct {
-		XMLName  xml.Name `xml:"ListBucketResult"`
-		Contents []struct {
-			Key          string `xml:"Key"`
-			Size         int64  `xml:"Size"`
-			LastModified string `xml:"LastModified"`
-			ETag         string `xml:"ETag"`
-		} `xml:"Contents"`
-		KeyCount int `xml:"KeyCount"`
-	}
-	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fatal("parse response: " + err.Error())
+	var objects []contentT
+	var prefixes []string
+	seenPrefix := map[string]bool{}
+	token := ""
+
+	for {
+		pageSize := 1000
+		if limit > 0 {
+			remaining := limit - len(objects)
+			if remaining <= 0 {
+				break
+			}
+			if remaining < pageSize {
+				pageSize = remaining
+			}
+		}
+
+		path := fmt.Sprintf("/%s?list-type=2&max-keys=%d", bucket, pageSize)
+		if prefix != "" {
+			path += "&prefix=" + url.QueryEscape(prefix)
+		}
+		if delimiter != "" {
+			path += "&delimiter=" + url.QueryEscape(delimiter)
+		}
+		if token != "" {
+			path += "&continuation-token=" + url.QueryEscape(token)
+		}
+
+		resp, err := s3Request("GET", path, nil)
+		if err != nil {
+			fatal(err.Error())
+		}
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)))
+		}
+
+		var result struct {
+			XMLName        xml.Name   `xml:"ListBucketResult"`
+			Contents       []contentT `xml:"Contents"`
+			CommonPrefixes []struct {
+				Prefix string `xml:"Prefix"`
+			} `xml:"CommonPrefixes"`
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			fatal("parse response: " + err.Error())
+		}
+		resp.Body.Close()
+
+		objects = append(objects, result.Contents...)
+		for _, cp := range result.CommonPrefixes {
+			if cp.Prefix != "" && !seenPrefix[cp.Prefix] {
+				seenPrefix[cp.Prefix] = true
+				prefixes = append(prefixes, cp.Prefix)
+			}
+		}
+
+		if !result.IsTruncated || result.NextContinuationToken == "" {
+			break
+		}
+		token = result.NextContinuationToken
 	}
 
-	if len(result.Contents) == 0 {
+	if len(objects) == 0 && len(prefixes) == 0 {
 		fmt.Println("No objects found.")
 		return
 	}
 
-	headers := []string{"KEY", "SIZE", "LAST MODIFIED", "ETAG"}
+	headers := []string{"NAME", "SIZE", "LAST MODIFIED", "ETAG"}
 	var rows [][]string
-	for _, obj := range result.Contents {
+	for _, p := range prefixes { // folders first, like a file explorer
+		rows = append(rows, []string{p, "DIR", "-", "-"})
+	}
+	for _, obj := range objects {
 		t, _ := time.Parse(time.RFC3339Nano, obj.LastModified)
 		rows = append(rows, []string{
 			obj.Key,
@@ -115,7 +173,12 @@ func objectList(args []string) {
 		})
 	}
 	printTable(headers, rows)
-	fmt.Printf("\n%d object(s)\n", len(result.Contents))
+
+	fmt.Printf("\n%d object(s)", len(objects))
+	if len(prefixes) > 0 {
+		fmt.Printf(", %d prefix(es)", len(prefixes))
+	}
+	fmt.Println()
 }
 
 func objectPut(args []string) {

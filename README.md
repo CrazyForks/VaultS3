@@ -1011,7 +1011,9 @@ vaults3-cli bucket delete my-bucket
 
 # Object operations
 vaults3-cli object put my-bucket docs/readme.md ./README.md
-vaults3-cli object ls my-bucket --prefix=docs/
+vaults3-cli object ls my-bucket                       # folder view (objects + prefixes)
+vaults3-cli object ls my-bucket --prefix=docs/        # list inside a prefix
+vaults3-cli object ls my-bucket --recursive           # all nested objects (paginates past 1000)
 vaults3-cli object get my-bucket docs/readme.md ./downloaded.md
 vaults3-cli object cp my-bucket/file.txt my-bucket/copy.txt
 vaults3-cli object rm my-bucket docs/readme.md

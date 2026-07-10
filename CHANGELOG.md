@@ -6,6 +6,14 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.11] - 2026-07-10
+### Fixed
+- **`vaults3-cli object ls` now lists past 1000 objects and shows a folder view**
+  (issue #30). It was capped at a single 1000-key page (the continuation token was
+  ignored) and always listed flat. It now follows the pagination cursor to list
+  everything, and by default shows a `mc ls`-style view: immediate objects plus
+  folders (`CommonPrefixes`), with `--recursive` for the full nested listing.
+
 ## [4.4.10] - 2026-07-09
 ### Added
 - **Cluster-wide capacity overview.** `GET /api/v1/cluster/info` aggregates every
@@ -642,7 +650,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.10...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.11...HEAD
+[4.4.11]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.10...v4.4.11
 [4.4.10]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.9...v4.4.10
 [4.4.9]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.8...v4.4.9
 [4.4.8]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.7...v4.4.8
