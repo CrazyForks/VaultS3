@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bytes"
+	"crypto/hmac"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -11,6 +11,10 @@ import (
 
 	"github.com/Kodiqa-Solutions/VaultS3/internal/sysinfo"
 )
+
+// clusterSecretHeader authenticates the inter-node /cluster/sysinfo request,
+// matching the cluster package's convention.
+const clusterSecretHeader = "X-Cluster-Secret"
 
 // NodeSystemInfo is one node's version, capacity, and object usage. The cluster
 // fields (NodeID/Address/Reachable) are omitted from the single-node
@@ -88,6 +92,20 @@ func (h *APIHandler) handleSystemInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.localSystemInfo())
 }
 
+// ClusterSysInfoHandler serves this node's system info on the cluster channel
+// (registered next to /cluster/status). The coordinator calls it peer-to-peer to
+// build the capacity rollup, so it does not depend on the dashboard /api/v1 port.
+// It is authenticated by the shared cluster secret when one is configured.
+func (h *APIHandler) ClusterSysInfoHandler(secret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if secret != "" && !hmac.Equal([]byte(r.Header.Get(clusterSecretHeader)), []byte(secret)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, http.StatusOK, h.localSystemInfo())
+	}
+}
+
 // handleClusterInfo handles GET /api/v1/cluster/info: the version and capacity of
 // every node in the cluster, plus aggregate totals — a cluster-wide equivalent of
 // `mc admin info`. On a single node it returns just this node.
@@ -136,28 +154,27 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// fetchPeerSystemInfo logs in to a peer with the shared admin credentials and
-// reads its /api/v1/system. An unreachable peer is returned with Reachable=false
-// rather than failing the whole rollup.
+// fetchPeerSystemInfo reads a peer's capacity over the cluster channel
+// (/cluster/sysinfo, the same address the object-placement proxy already reaches
+// for S3 forwarding). This avoids the dashboard /api/v1 port and admin login,
+// which are not reachable peer-to-peer in split-port or proxied deployments. An
+// unreachable peer is returned with Reachable=false rather than failing the
+// whole rollup.
 func (h *APIHandler) fetchPeerSystemInfo(id, addr string) NodeSystemInfo {
 	ni := NodeSystemInfo{NodeID: id, Address: addr}
 	scheme := "http"
 	if h.cfg != nil && h.cfg.Server.TLS.Enabled {
 		scheme = "https"
 	}
-	base := scheme + "://" + addr
 
-	token, err := h.peerLogin(base)
-	if err != nil {
-		ni.Error = "login: " + err.Error()
-		return ni
-	}
-	req, err := http.NewRequest(http.MethodGet, base+"/api/v1/system", nil)
+	req, err := http.NewRequest(http.MethodGet, scheme+"://"+addr+"/cluster/sysinfo", nil)
 	if err != nil {
 		ni.Error = err.Error()
 		return ni
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if h.clusterSecret != "" {
+		req.Header.Set(clusterSecretHeader, h.clusterSecret)
+	}
 	resp, err := clusterInfoClient.Do(req)
 	if err != nil {
 		ni.Error = err.Error()
@@ -165,7 +182,7 @@ func (h *APIHandler) fetchPeerSystemInfo(id, addr string) NodeSystemInfo {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		ni.Error = fmt.Sprintf("system returned HTTP %d", resp.StatusCode)
+		ni.Error = fmt.Sprintf("cluster/sysinfo returned HTTP %d", resp.StatusCode)
 		return ni
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&ni); err != nil {
@@ -174,34 +191,6 @@ func (h *APIHandler) fetchPeerSystemInfo(id, addr string) NodeSystemInfo {
 	}
 	ni.NodeID, ni.Address, ni.Reachable, ni.Error = id, addr, true, ""
 	return ni
-}
-
-func (h *APIHandler) peerLogin(base string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"accessKey": h.cfg.Auth.AdminAccessKey,
-		"secretKey": h.cfg.Auth.AdminSecretKey,
-	})
-	resp, err := clusterInfoClient.Post(base+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		// A 403 usually means this address is not serving the dashboard API (e.g.
-		// it points at the S3 port, or a split console_port); 401 means the admin
-		// credentials differ between nodes.
-		return "", fmt.Errorf("HTTP %d (peer may not serve /api/v1 at this address, or admin credentials differ)", resp.StatusCode)
-	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.Token == "" {
-		return "", fmt.Errorf("login returned no token")
-	}
-	return out.Token, nil
 }
 
 func uniqueNonEmpty(in []string) []string {

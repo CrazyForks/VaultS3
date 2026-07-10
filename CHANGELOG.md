@@ -6,6 +6,18 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.13] - 2026-07-10
+### Fixed
+- **Cluster capacity now gathers peer info over the cluster channel** (issue #29).
+  The coordinator built the rollup by logging in to each peer's dashboard `/api/v1`
+  API, which is unreachable peer-to-peer in split-`console_port` or proxied
+  (Kubernetes + Envoy) deployments — every remote node showed as unreachable while
+  only the node serving the request appeared. Nodes now expose their capacity on a
+  new cluster-secret-authenticated `/cluster/sysinfo` endpoint (served next to
+  `/cluster/status`), and the coordinator fetches it over the same peer addresses
+  the placement proxy already uses for S3 forwarding — no dashboard login, no
+  console-port dependency. Response is assembled server-side.
+
 ## [4.4.12] - 2026-07-10
 ### Fixed
 - **Cluster capacity now reports *why* a node is unreachable** (issue #29). The
@@ -661,7 +673,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.12...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.13...HEAD
+[4.4.13]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.12...v4.4.13
 [4.4.12]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.11...v4.4.12
 [4.4.11]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.10...v4.4.11
 [4.4.10]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.9...v4.4.10

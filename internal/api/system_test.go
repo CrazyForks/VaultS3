@@ -11,33 +11,30 @@ import (
 )
 
 // TestClusterInfoAggregation covers the Tier-2 cluster rollup: the coordinator
-// fetches each peer's /api/v1/system (via admin login) and aggregates capacity,
-// marking unreachable peers without failing the whole call.
+// fetches each peer's /cluster/sysinfo over the cluster channel and aggregates
+// capacity, marking unreachable peers without failing the whole call.
 func TestClusterInfoAggregation(t *testing.T) {
 	h, store := newTestAPI(t)
 	if err := store.CreateBucket("b"); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 
-	// A reachable peer that serves admin login + its system info.
+	// A reachable peer that serves its system info on the cluster channel.
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/auth/login"):
-			w.Write([]byte(`{"token":"t"}`))
-		case strings.HasSuffix(r.URL.Path, "/system"):
+		if strings.HasSuffix(r.URL.Path, "/cluster/sysinfo") {
 			json.NewEncoder(w).Encode(NodeSystemInfo{
 				Version: "v9", OS: "linux", Arch: "amd64",
 				Disk:        sysinfo.Disk{TotalBytes: 1000, UsedBytes: 400, FreeBytes: 600},
 				ObjectBytes: 50, ObjectCount: 5, BucketCount: 2,
 			})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer peer.Close()
 	peerAddr := strings.TrimPrefix(peer.URL, "http://")
 
-	// A peer whose login returns 403 (e.g. address points at the S3 port) — must
+	// A peer that returns 403 on the cluster channel (e.g. secret mismatch) — must
 	// be reported unreachable WITH a reason, not silently.
 	peer403 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -51,9 +48,9 @@ func TestClusterInfoAggregation(t *testing.T) {
 			"node-a": "self:9000",   // self — computed locally, not fetched
 			"node-b": peerAddr,      // reachable peer
 			"node-c": "127.0.0.1:1", // connection refused
-			"node-d": peer403Addr,   // login 403
+			"node-d": peer403Addr,   // cluster/sysinfo 403
 		}
-	})
+	}, "")
 
 	rr := httptest.NewRecorder()
 	h.handleClusterInfo(rr, httptest.NewRequest(http.MethodGet, "/x", nil))

@@ -55,7 +55,8 @@ type APIHandler struct {
 	clusterProxy     ClusterProxyFunc                        // proxy a single-object request to its owner (download/delete)
 	clusterOwner     func(bucket, key string) (string, bool) // owner API addr for placement (upload); ("",false) if local
 	clusterSelfID    string                                  // this node's cluster ID ("" if single-node)
-	clusterNodeAddrs func() map[string]string                // nodeID -> API addr for all cluster nodes (nil if single-node)
+	clusterNodeAddrs func() map[string]string                // nodeID -> peer addr for all cluster nodes (nil if single-node)
+	clusterSecret    string                                  // shared secret for the inter-node /cluster/sysinfo call
 }
 
 // ReplicationFunc is called after a dashboard-initiated object mutation so the
@@ -74,10 +75,12 @@ func (h *APIHandler) SetClusterRouting(proxy ClusterProxyFunc, owner func(bucket
 }
 
 // SetClusterInfo wires the cluster-wide capacity rollup (no-op single-node).
-// nodeAddrs returns the current nodeID -> API-address map.
-func (h *APIHandler) SetClusterInfo(selfID string, nodeAddrs func() map[string]string) {
+// nodeAddrs returns the current nodeID -> peer-address map; secret authenticates
+// the inter-node /cluster/sysinfo call.
+func (h *APIHandler) SetClusterInfo(selfID string, nodeAddrs func() map[string]string, secret string) {
 	h.clusterSelfID = selfID
 	h.clusterNodeAddrs = nodeAddrs
+	h.clusterSecret = secret
 }
 
 func NewAPIHandler(store metadata.StoreAPI, engine storage.Engine, mc *metrics.Collector, cfg *config.Config, activity *ActivityLog) *APIHandler {

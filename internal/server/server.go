@@ -679,7 +679,7 @@ func (s *Server) Run() error {
 		)
 		// Cluster-wide capacity rollup: this node aggregates every node's
 		// /api/v1/system for the mc-admin-info style view.
-		apiHandler.SetClusterInfo(s.cfg.Cluster.NodeID, s.clusterProxy.NodeAddrs)
+		apiHandler.SetClusterInfo(s.cfg.Cluster.NodeID, s.clusterProxy.NodeAddrs, s.cfg.Cluster.Secret)
 	}
 
 	// Update checker (notifier always; auto-apply only if explicitly enabled).
@@ -767,10 +767,11 @@ func (s *Server) Run() error {
 	// Register cluster endpoints if enabled
 	if s.clusterNode != nil {
 		mux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
+		mux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		mux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		mux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())
-		slog.Info("cluster endpoints registered", "paths", []string{"/cluster/status", "/cluster/join", "/cluster/leave", "/cluster/apply"})
+		slog.Info("cluster endpoints registered", "paths", []string{"/cluster/status", "/cluster/sysinfo", "/cluster/join", "/cluster/leave", "/cluster/apply"})
 	}
 
 	// Register bidirectional replication sync endpoint
@@ -938,6 +939,7 @@ func (s *Server) Run() error {
 		interNodeAddr := fmt.Sprintf("%s:%d", s.cfg.Server.InterNodeAddress, s.cfg.Server.InterNodePort)
 		interNodeMux := http.NewServeMux()
 		interNodeMux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
+		interNodeMux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		interNodeMux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		interNodeMux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())
