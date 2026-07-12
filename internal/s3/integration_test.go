@@ -771,6 +771,67 @@ func TestIntegrationMultipartUpload(t *testing.T) {
 	}
 }
 
+// TestIntegrationMultipartLargePartList is a regression test for issue #26: the
+// CompleteMultipartUpload body was read through a 256KB LimitReader, which
+// silently truncated the part list for large uploads (a 100GB object is
+// thousands of parts). xml.Decode then failed on the cut-off document, so
+// aws-cli got "MalformedXML: Could not parse request body". A part list larger
+// than the old cap must now parse fully — here it reaches part assembly and
+// reports the first genuinely missing part instead of a bogus MalformedXML.
+func TestIntegrationMultipartLargePartList(t *testing.T) {
+	ts := newIntegrationServer(t)
+	bucket := "mp-large-list"
+	key := "big.bin"
+
+	resp := doSigned(t, http.MethodPut, ts.URL+"/"+bucket, nil)
+	resp.Body.Close()
+
+	resp = doSigned(t, http.MethodPost, ts.URL+"/"+bucket+"/"+key+"?uploads", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("InitiateMultipartUpload: status %d", resp.StatusCode)
+	}
+	var initResult initiateResult
+	if err := xml.NewDecoder(resp.Body).Decode(&initResult); err != nil {
+		t.Fatalf("decode initiate result: %v", err)
+	}
+	resp.Body.Close()
+	uploadID := initResult.UploadID
+
+	// Upload one real part, then complete with a part list of 4,000 parts (~350KB
+	// of XML, well over the old 256KB cap). The body must parse in full: the
+	// handler then finds part 2 missing (InvalidPart), which only happens if the
+	// whole list decoded — an old-style truncation returns MalformedXML instead.
+	resp = doSigned(t, http.MethodPut,
+		fmt.Sprintf("%s/%s/%s?uploadId=%s&partNumber=1", ts.URL, bucket, key, uploadID), []byte("part-one"))
+	etag1 := resp.Header.Get("ETag")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("UploadPart 1: status %d", resp.StatusCode)
+	}
+
+	var completeBuf strings.Builder
+	completeBuf.WriteString("<CompleteMultipartUpload>")
+	fmt.Fprintf(&completeBuf, "<Part><PartNumber>1</PartNumber><ETag>%s</ETag></Part>", etag1)
+	for i := 2; i <= 4000; i++ {
+		fmt.Fprintf(&completeBuf, "<Part><PartNumber>%d</PartNumber><ETag>\"%032x\"</ETag></Part>", i, i)
+	}
+	completeBuf.WriteString("</CompleteMultipartUpload>")
+	if completeBuf.Len() <= 256*1024 {
+		t.Fatalf("test part list is only %d bytes; need > 256KB to exercise the old cap", completeBuf.Len())
+	}
+
+	resp = doSigned(t, http.MethodPost,
+		fmt.Sprintf("%s/%s/%s?uploadId=%s", ts.URL, bucket, key, uploadID),
+		[]byte(completeBuf.String()))
+	body := readBody(t, resp)
+	if strings.Contains(body, "MalformedXML") {
+		t.Fatalf("large part list rejected as MalformedXML (body truncated by the cap): %s", body)
+	}
+	if !strings.Contains(body, "InvalidPart") {
+		t.Fatalf("expected InvalidPart for the missing part 2 (proves the full list parsed), got: %s", body)
+	}
+}
+
 func TestIntegrationMultipartAbort(t *testing.T) {
 	ts := newIntegrationServer(t)
 	bucket := "mp-abort-bucket"

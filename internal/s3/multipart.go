@@ -154,8 +154,15 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 		Parts   []completePart `xml:"Part"`
 	}
 
+	// S3 allows up to 10,000 parts, so the CompleteMultipartUpload part list can be
+	// a few MB (each <Part> carries a number, an ETag, and optional checksum
+	// fields). The old 256KB cap silently truncated the body for large uploads
+	// (~2,000+ parts), so xml.Decode failed with "MalformedXML" — the exact error
+	// aws-cli hit uploading a multi-GB object (issue #26). 8MiB fits 10,000 parts
+	// with room to spare while staying bounded.
+	const maxCompleteBodySize = 8 << 20
 	var req completeRequest
-	if err := xml.NewDecoder(io.LimitReader(r.Body, 256*1024)).Decode(&req); err != nil {
+	if err := xml.NewDecoder(io.LimitReader(r.Body, maxCompleteBodySize)).Decode(&req); err != nil {
 		writeS3Error(w, "MalformedXML", "Could not parse request body", http.StatusBadRequest)
 		return
 	}

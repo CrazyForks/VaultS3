@@ -6,6 +6,16 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.16] - 2026-07-12
+### Fixed
+- **Large multipart uploads no longer fail with `MalformedXML` on completion**
+  (issue #26). The `CompleteMultipartUpload` request body was read through a 256KB
+  limit, which silently truncated the part list for large objects (a 100GB upload
+  is thousands of parts, and even ~17GB at the default 8MB part size exceeds it).
+  The XML then failed to parse, so S3 clients (aws-cli, rclone, s3cmd) reported
+  `MalformedXML: Could not parse request body` when finishing a multi-GB upload.
+  The cap is raised to comfortably hold the full S3 maximum of 10,000 parts.
+
 ## [4.4.15] - 2026-07-12
 ### Fixed
 - **Dashboard uploads now report storage failures instead of silently failing**
@@ -686,7 +696,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.15...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.16...HEAD
+[4.4.16]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.15...v4.4.16
 [4.4.15]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.14...v4.4.15
 [4.4.14]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.12...v4.4.14
 [4.4.12]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.11...v4.4.12
