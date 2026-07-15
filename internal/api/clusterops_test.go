@@ -17,10 +17,10 @@ type fakeCluster struct {
 	joinErr, leaveEr error
 }
 
-func (f *fakeCluster) SelfID() string            { return f.self }
-func (f *fakeCluster) IsLeader() bool            { return f.isLeader }
-func (f *fakeCluster) LeaderID() string          { return f.leader }
-func (f *fakeCluster) Members() []ClusterMember  { return f.members }
+func (f *fakeCluster) SelfID() string           { return f.self }
+func (f *fakeCluster) IsLeader() bool           { return f.isLeader }
+func (f *fakeCluster) LeaderID() string         { return f.leader }
+func (f *fakeCluster) Members() []ClusterMember { return f.members }
 func (f *fakeCluster) Join(id, addr string) error {
 	f.joined = append(f.joined, id)
 	return f.joinErr
