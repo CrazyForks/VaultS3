@@ -45,7 +45,7 @@ func (h *ObjectHandler) CreateMultipartUpload(w http.ResponseWriter, r *http.Req
 		CreatedAt:   time.Now().UTC().Unix(),
 	}
 
-	if err := h.store.CreateMultipartUpload(upload); err != nil {
+	if err := h.multipartStore().CreateMultipartUpload(upload); err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 		return
@@ -76,7 +76,7 @@ func (h *ObjectHandler) CreateMultipartUpload(w http.ResponseWriter, r *http.Req
 
 // UploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=X.
 func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.store.GetMultipartUpload(uploadID)
+	_, err := h.multipartStore().GetMultipartUpload(uploadID)
 	if err != nil {
 		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
 		return
@@ -117,7 +117,7 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucke
 
 	etag := fmt.Sprintf("\"%s\"", hex.EncodeToString(hash.Sum(nil)))
 
-	h.store.PutPart(uploadID, metadata.PartInfo{
+	h.multipartStore().PutPart(uploadID, metadata.PartInfo{
 		PartNumber: partNum,
 		ETag:       etag,
 		Size:       written,
@@ -129,14 +129,14 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucke
 
 // CompleteMultipartUpload handles POST /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	upload, err := h.store.GetMultipartUpload(uploadID)
+	upload, err := h.multipartStore().GetMultipartUpload(uploadID)
 	if err != nil {
 		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
 		return
 	}
 
 	// Check quota (estimate size from parts)
-	parts, _ := h.store.ListParts(uploadID)
+	parts, _ := h.multipartStore().ListParts(uploadID)
 	var estimatedSize int64
 	for _, p := range parts {
 		estimatedSize += p.Size
@@ -261,7 +261,7 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 
 	// Clean up
 	os.RemoveAll(h.multipartDir(uploadID))
-	h.store.DeleteMultipartUpload(uploadID)
+	h.multipartStore().DeleteMultipartUpload(uploadID)
 
 	type completeResult struct {
 		XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
@@ -298,14 +298,14 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 
 // AbortMultipartUpload handles DELETE /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.store.GetMultipartUpload(uploadID)
+	_, err := h.multipartStore().GetMultipartUpload(uploadID)
 	if err != nil {
 		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
 		return
 	}
 
 	os.RemoveAll(h.multipartDir(uploadID))
-	h.store.DeleteMultipartUpload(uploadID)
+	h.multipartStore().DeleteMultipartUpload(uploadID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -320,7 +320,7 @@ func (h *ObjectHandler) multipartDir(uploadID string) string {
 
 // UploadPartCopy handles PUT /{bucket}/{key}?partNumber=N&uploadId=X with X-Amz-Copy-Source.
 func (h *ObjectHandler) UploadPartCopy(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.store.GetMultipartUpload(uploadID)
+	_, err := h.multipartStore().GetMultipartUpload(uploadID)
 	if err != nil {
 		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
 		return
@@ -415,7 +415,7 @@ func (h *ObjectHandler) UploadPartCopy(w http.ResponseWriter, r *http.Request, b
 
 	etag := fmt.Sprintf("\"%s\"", hex.EncodeToString(hash.Sum(nil)))
 
-	h.store.PutPart(uploadID, metadata.PartInfo{
+	h.multipartStore().PutPart(uploadID, metadata.PartInfo{
 		PartNumber: partNum,
 		ETag:       etag,
 		Size:       written,
@@ -445,7 +445,7 @@ func generateUploadID() string {
 
 // ListMultipartUploads handles GET /{bucket}?uploads.
 func (h *ObjectHandler) ListMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
-	uploads, err := h.store.ListMultipartUploads(bucket)
+	uploads, err := h.multipartStore().ListMultipartUploads(bucket)
 	if err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
@@ -479,13 +479,13 @@ func (h *ObjectHandler) ListMultipartUploads(w http.ResponseWriter, r *http.Requ
 
 // ListParts handles GET /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) ListParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.store.GetMultipartUpload(uploadID)
+	_, err := h.multipartStore().GetMultipartUpload(uploadID)
 	if err != nil {
 		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
 		return
 	}
 
-	parts, err := h.store.ListParts(uploadID)
+	parts, err := h.multipartStore().ListParts(uploadID)
 	if err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)

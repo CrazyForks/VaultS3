@@ -22,7 +22,14 @@ import (
 )
 
 type ObjectHandler struct {
-	store             metadata.StoreAPI
+	store metadata.StoreAPI
+	// mpStore holds in-progress multipart upload metadata. In a cluster this is the
+	// node-LOCAL store, not the Raft-replicated one: every request for an object
+	// routes to the same owner node and its part data is written to that node's
+	// local disk, so replicating the metadata through Raft only added a
+	// read-after-write lag that returned 404 NoSuchUpload for a part uploaded right
+	// after CreateMultipartUpload on a follower (issue #32). Defaults to store.
+	mpStore           metadata.StoreAPI
 	engine            storage.Engine
 	encryptionEnabled bool
 	onNotification    NotificationFunc
@@ -31,6 +38,16 @@ type ObjectHandler struct {
 	onSearchUpdate    SearchUpdateFunc
 	onLambda          LambdaFunc
 	accessUpdater     *metadata.AccessUpdater
+}
+
+// multipartStore returns the store used for in-progress multipart upload
+// metadata (node-local in a cluster; see the mpStore field). Falls back to the
+// main store when not separately configured.
+func (h *ObjectHandler) multipartStore() metadata.StoreAPI {
+	if h.mpStore != nil {
+		return h.mpStore
+	}
+	return h.store
 }
 
 // checkQuota verifies bucket quota limits before writing.

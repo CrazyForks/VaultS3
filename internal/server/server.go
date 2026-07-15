@@ -366,6 +366,13 @@ func New(cfg *config.Config) (*Server, error) {
 	writable.Store(true)
 	s3h.SetWritableFlag(writable)
 
+	// Keep in-progress multipart upload metadata on the node-local store, not Raft.
+	// All requests for an object route to the same owner node and its parts live on
+	// that node's local disk, so replicating the metadata only added a
+	// read-after-write lag that 404'd concurrent part uploads (issue #32). `store`
+	// is the raw local store even when metaStore is the distributed one.
+	s3h.SetLocalMultipartStore(store)
+
 	// Per-bucket encryption keys: when a master key is configured, opting a bucket
 	// into SSE-S3 provisions a per-bucket data key (see
 	// docs/design/per-bucket-encryption.md). Reuses the encryption master key as KEK.

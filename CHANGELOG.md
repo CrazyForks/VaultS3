@@ -6,6 +6,21 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.18] - 2026-07-15
+### Fixed
+- **Concurrent multipart uploads no longer fail with 404 `NoSuchUpload` in a
+  cluster** (issue #32). In-progress multipart upload metadata was written through
+  Raft, but reads were served from the local store. On a follower, a part uploaded
+  immediately after `CreateMultipartUpload` could hit the node before it had
+  applied its own forwarded create, so `UploadPart` returned `404 NoSuchUpload` —
+  frequently under high concurrency (e.g. `rclone --transfers=600
+  --s3-upload-concurrency 8`), never for sequential/low-concurrency uploads. Since
+  every request for an object already routes to the same owner node and its part
+  data is stored on that node's local disk, multipart metadata is now kept on the
+  node-local store too (co-located, no replication lag). The final assembled
+  object is still written through Raft so it is visible cluster-wide. Single-node
+  behavior is unchanged.
+
 ## [4.4.17] - 2026-07-15
 ### Added
 - **Cluster operations in `vaults3-cli` and the admin API** (issue #31). New
@@ -713,7 +728,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.17...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.18...HEAD
+[4.4.18]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.17...v4.4.18
 [4.4.17]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.16...v4.4.17
 [4.4.16]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.15...v4.4.16
 [4.4.15]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.14...v4.4.15

@@ -79,8 +79,20 @@ func NewHandler(store metadata.StoreAPI, engine storage.Engine, auth *Authentica
 		metrics:           mc,
 	}
 	h.buckets = &BucketHandler{store: store, engine: engine}
-	h.objects = &ObjectHandler{store: store, engine: engine, encryptionEnabled: encryptionEnabled}
+	h.objects = &ObjectHandler{store: store, mpStore: store, engine: engine, encryptionEnabled: encryptionEnabled}
 	return h
+}
+
+// SetLocalMultipartStore points in-progress multipart upload metadata at the
+// node-local store instead of the Raft-replicated one. In a cluster every
+// request for an object routes to the same owner node and its part data is
+// already local, so keeping the metadata local removes the read-after-write lag
+// that caused 404 NoSuchUpload under concurrent part uploads (issue #32). No-op
+// meaning on a single node (local == replicated store).
+func (h *Handler) SetLocalMultipartStore(local metadata.StoreAPI) {
+	if local != nil {
+		h.objects.mpStore = local
+	}
 }
 
 // SetKeyManager wires the per-bucket encryption key manager (may be nil).
