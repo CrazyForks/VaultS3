@@ -6,6 +6,19 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.20] - 2026-07-16
+### Changed
+- **Folder listings now carry a Last-Modified date** (issue #35). S3 "folders"
+  (common prefixes) have no timestamp in the standard, so listings returned them
+  dateless and clients (e.g. rclone) filled in a fake date. VaultS3 already had
+  the real date in hand while collapsing a folder — the folder's directory-marker
+  object (its date preserved on migration) or, failing that, its first child — but
+  discarded it. It now surfaces that date: `ListObjectsV2` adds a `<LastModified>`
+  to each `<CommonPrefixes>` entry (a backward-compatible extension — standard S3
+  clients ignore the extra element), and the dashboard file browser shows folder
+  dates instead of blanks. Whether a given third-party client displays the folder
+  date is up to that client.
+
 ## [4.4.19] - 2026-07-16
 ### Fixed
 - **Deleted objects no longer linger as phantoms in a cluster** (issue #34). After
@@ -746,7 +759,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.19...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.20...HEAD
+[4.4.20]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.19...v4.4.20
 [4.4.19]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.18...v4.4.19
 [4.4.18]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.17...v4.4.18
 [4.4.17]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.16...v4.4.17

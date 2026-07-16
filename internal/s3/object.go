@@ -1504,6 +1504,11 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 	}
 	type xmlCommonPrefix struct {
 		Prefix string `xml:"Prefix"`
+		// LastModified is a VaultS3 extension: standard S3 CommonPrefixes carry no
+		// timestamp, so folders list dateless and clients fake a date (issue #35).
+		// This surfaces the folder's real date (its directory marker or first child)
+		// for clients that read it; standard clients ignore the extra element.
+		LastModified string `xml:"LastModified,omitempty"`
 	}
 	type xmlResponse struct {
 		XMLName               xml.Name          `xml:"ListBucketResult"`
@@ -1542,7 +1547,11 @@ func (h *ObjectHandler) ListObjects(w http.ResponseWriter, r *http.Request, buck
 		})
 	}
 	for _, cp := range commonPrefixes {
-		resp.CommonPrefixes = append(resp.CommonPrefixes, xmlCommonPrefix{Prefix: cp})
+		xcp := xmlCommonPrefix{Prefix: cp.Prefix}
+		if cp.LastModified > 0 {
+			xcp.LastModified = time.Unix(cp.LastModified, 0).UTC().Format(time.RFC3339)
+		}
+		resp.CommonPrefixes = append(resp.CommonPrefixes, xcp)
 	}
 	resp.KeyCount = len(resp.Contents) + len(resp.CommonPrefixes)
 

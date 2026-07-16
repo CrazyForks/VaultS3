@@ -1311,6 +1311,16 @@ func (s *Store) ListLatestObjects(bucket, prefix, startAfter string, maxKeys int
 	return objects, truncated, nil
 }
 
+// CommonPrefixInfo is a listing "folder" (common prefix) plus a best-effort
+// LastModified sourced from the first key under it (a directory-marker object at
+// that prefix, or the folder's first child). Zero if unknown. S3 CommonPrefixes
+// have no standard timestamp; this lets folders show a real date instead of a
+// client-faked one (issue #35).
+type CommonPrefixInfo struct {
+	Prefix       string
+	LastModified int64
+}
+
 // ListLatestObjectsDelimited lists the latest objects under prefix, collapsing
 // keys that share a prefix up to the first delimiter into common prefixes
 // ("folders"). It seeks PAST each folder's contents, so a folder level returns up
@@ -1318,7 +1328,7 @@ func (s *Store) ListLatestObjects(bucket, prefix, startAfter string, maxKeys int
 // "folder-heavy buckets only show a few folders per page" and making the listing
 // O(folders) instead of O(objects). Returns (direct objects, common prefixes,
 // truncated, nextStartAfter).
-func (s *Store) ListLatestObjectsDelimited(bucket, prefix, delimiter, startAfter string, maxKeys int) ([]ObjectMeta, []string, bool, string, error) {
+func (s *Store) ListLatestObjectsDelimited(bucket, prefix, delimiter, startAfter string, maxKeys int) ([]ObjectMeta, []CommonPrefixInfo, bool, string, error) {
 	if delimiter == "" {
 		objs, trunc, err := s.ListLatestObjects(bucket, prefix, startAfter, maxKeys)
 		next := ""
@@ -1337,7 +1347,7 @@ func (s *Store) ListLatestObjectsDelimited(bucket, prefix, delimiter, startAfter
 	seekKey := []byte(bucketPrefix + start)
 
 	var objects []ObjectMeta
-	var prefixes []string
+	var prefixes []CommonPrefixInfo
 	truncated := false
 	nextCursor := ""
 
@@ -1371,7 +1381,13 @@ func (s *Store) ListLatestObjectsDelimited(bucket, prefix, delimiter, startAfter
 					truncated = true
 					break
 				}
-				prefixes = append(prefixes, cp)
+				// A "folder" (CommonPrefix) has no timestamp in S3, but the first key
+				// under it does: either an explicit directory-marker object at that
+				// prefix (key == cp) whose date the source preserved, or the folder's
+				// first child. Carry that date on the CommonPrefix so folders don't
+				// list dateless and clients (and the dashboard) don't fake a date
+				// (issue #35). meta is this triggering key's metadata.
+				prefixes = append(prefixes, CommonPrefixInfo{Prefix: cp, LastModified: meta.LastModified})
 				nextCursor = cp + "\xff" // resume after every key under this folder
 				k, v = c.Seek(append([]byte(bucketPrefix+cp), 0xff))
 				continue

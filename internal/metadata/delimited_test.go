@@ -8,7 +8,7 @@ import (
 func TestListLatestObjectsDelimited(t *testing.T) {
 	s := newTestStore(t)
 	put := func(key string) {
-		if err := s.PutObjectMeta(ObjectMeta{Bucket: "b", Key: key, Size: 1, ContentType: "text/plain"}); err != nil {
+		if err := s.PutObjectMeta(ObjectMeta{Bucket: "b", Key: key, Size: 1, ContentType: "text/plain", LastModified: 1700000000}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -25,8 +25,12 @@ func TestListLatestObjectsDelimited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prefixes) != 2 || prefixes[0] != "folderA/" || prefixes[1] != "folderB/" {
+	if len(prefixes) != 2 || prefixes[0].Prefix != "folderA/" || prefixes[1].Prefix != "folderB/" {
 		t.Fatalf("prefixes = %v, want [folderA/ folderB/]", prefixes)
+	}
+	// Each folder carries a date sourced from the first key under it (issue #35).
+	if prefixes[0].LastModified == 0 || prefixes[1].LastModified == 0 {
+		t.Fatalf("folders should carry a LastModified, got %+v", prefixes)
 	}
 	if len(objs) != 2 || objs[0].Key != "a.txt" || objs[1].Key != "z.txt" {
 		t.Fatalf("objects = %v, want a.txt, z.txt", keysOf(objs))
@@ -51,7 +55,7 @@ func TestListLatestObjectsDelimited(t *testing.T) {
 			seen[x.Key] = true
 		}
 		for _, x := range p {
-			seen[x] = true
+			seen[x.Prefix] = true
 		}
 		pages++
 		if !tr {

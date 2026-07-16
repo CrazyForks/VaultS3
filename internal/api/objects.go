@@ -68,7 +68,13 @@ func (h *APIHandler) handleListObjects(w http.ResponseWriter, r *http.Request, b
 
 	items := make([]objectListItem, 0, len(prefixes)+len(objects))
 	for _, folder := range prefixes {
-		items = append(items, objectListItem{Key: folder, IsPrefix: true})
+		item := objectListItem{Key: folder.Prefix, IsPrefix: true}
+		// Surface the folder's date (its directory marker or first child) so the
+		// browser shows a real date instead of a blank (issue #35).
+		if folder.LastModified > 0 {
+			item.LastModified = time.Unix(folder.LastModified, 0).UTC().Format(time.RFC3339)
+		}
+		items = append(items, item)
 	}
 	for _, obj := range objects {
 		items = append(items, objectListItem{
