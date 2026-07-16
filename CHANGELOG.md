@@ -6,6 +6,24 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.19] - 2026-07-16
+### Fixed
+- **Deleted objects no longer linger as phantoms in a cluster** (issue #34). After
+  a successful delete, a HEAD/GET from a client whose connection landed on a
+  different node could still return the object — a HEAD came back `200` with null
+  `Last-Modified`/`ETag` and a stale `Content-Length`. Two causes, both fixed:
+  - **Metadata is now the single source of truth (correctness).** `HeadObject` and
+    `GetObject` no longer fall back to "is there a data file on disk?" when an
+    object's metadata is gone. A delete removes metadata cluster-wide (via Raft),
+    so HEAD/GET now return `404 NoSuchKey` consistently on every node, even if a
+    data file lingers.
+  - **Orphan data files are now reaped (disk reclamation).** Writes land on a
+    single node, but a past ring/primary change can leave an orphan copy on
+    another node. A delete now broadcasts a best-effort, cluster-secret-authed
+    object-delete to every node so the orphan's disk is reclaimed. Correctness
+    does not depend on it — the metadata fix already prevents phantom reads.
+  Single-node behavior is unchanged.
+
 ## [4.4.18] - 2026-07-15
 ### Fixed
 - **Concurrent multipart uploads no longer fail with 404 `NoSuchUpload` in a
@@ -728,7 +746,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.18...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.19...HEAD
+[4.4.19]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.18...v4.4.19
 [4.4.18]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.17...v4.4.18
 [4.4.17]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.16...v4.4.17
 [4.4.16]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.15...v4.4.16

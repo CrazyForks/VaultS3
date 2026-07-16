@@ -4,9 +4,49 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+// TestClusterObjectDeleteHandler covers issue #34 layer 2: the inter-node
+// object-delete endpoint removes the local engine file (cluster-secret authed)
+// and rejects an unauthenticated caller.
+func TestClusterObjectDeleteHandler(t *testing.T) {
+	h, store := newTestAPI(t)
+	if err := store.CreateBucket("b"); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	if _, _, err := h.engine.PutObject("b", "k", strings.NewReader("data"), 4); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	if !h.engine.ObjectExists("b", "k") {
+		t.Fatal("precondition: object should exist")
+	}
+	handler := h.ClusterObjectDeleteHandler("s3cr3t")
+
+	// Wrong/missing secret → 401, file untouched.
+	rr := httptest.NewRecorder()
+	handler(rr, httptest.NewRequest(http.MethodPost, "/cluster/object-delete?bucket=b&key=k", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("no secret: status %d, want 401", rr.Code)
+	}
+	if !h.engine.ObjectExists("b", "k") {
+		t.Fatal("file removed without authentication")
+	}
+
+	// Correct secret → 200, file reaped.
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/cluster/object-delete?bucket=b&key=k", nil)
+	req.Header.Set(clusterSecretHeader, "s3cr3t")
+	handler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("with secret: status %d, want 200", rr.Code)
+	}
+	if h.engine.ObjectExists("b", "k") {
+		t.Fatal("object file was not reaped")
+	}
+}
 
 // fakeCluster is a test ClusterController.
 type fakeCluster struct {

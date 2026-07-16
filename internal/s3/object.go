@@ -32,12 +32,18 @@ type ObjectHandler struct {
 	mpStore           metadata.StoreAPI
 	engine            storage.Engine
 	encryptionEnabled bool
-	onNotification    NotificationFunc
-	onReplication     ReplicationFunc
-	onScan            ScanFunc
-	onSearchUpdate    SearchUpdateFunc
-	onLambda          LambdaFunc
-	accessUpdater     *metadata.AccessUpdater
+	// reapReplicas, if set (cluster mode), removes an object's data file from every
+	// OTHER node after a delete. Writes land on a single node, but a ring/primary
+	// change can leave an orphan copy elsewhere; without reaping it lingers on disk
+	// (issue #34 layer 2). Best-effort and asynchronous — correctness already comes
+	// from metadata being authoritative (layer 1), this just reclaims disk.
+	reapReplicas   func(bucket, key string)
+	onNotification NotificationFunc
+	onReplication  ReplicationFunc
+	onScan         ScanFunc
+	onSearchUpdate SearchUpdateFunc
+	onLambda       LambdaFunc
+	accessUpdater  *metadata.AccessUpdater
 }
 
 // multipartStore returns the store used for in-progress multipart upload
@@ -499,7 +505,14 @@ func (h *ObjectHandler) GetObject(w http.ResponseWriter, r *http.Request, bucket
 			return
 		}
 
-		if meta != nil && meta.VersionID != "" {
+		if meta == nil {
+			// Metadata is authoritative: a deleted object is gone even if a data
+			// file lingers on a replica node, so don't serve phantom bytes from the
+			// engine (issue #34, same root cause as the phantom HEAD).
+			writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
+			return
+		}
+		if meta.VersionID != "" {
 			// Versioned bucket — read from version storage
 			reader, size, err = h.engine.GetObjectVersion(bucket, key, meta.VersionID)
 			w.Header().Set("X-Amz-Version-Id", meta.VersionID)
@@ -832,6 +845,11 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 	}
 
 	h.store.DeleteObjectMeta(bucket, key)
+	// Reap any orphan copy left on another node by a past ring/primary change so
+	// deleted data doesn't linger on disk (issue #34 layer 2). Async/best-effort.
+	if h.reapReplicas != nil {
+		h.reapReplicas(bucket, key)
+	}
 	w.WriteHeader(http.StatusNoContent)
 	if h.onNotification != nil {
 		h.onNotification("s3:ObjectRemoved:Delete", bucket, key, 0, "", "")
@@ -947,19 +965,12 @@ func (h *ObjectHandler) HeadObject(w http.ResponseWriter, r *http.Request, bucke
 			return
 		}
 		if meta == nil {
-			if !h.engine.ObjectExists(bucket, key) {
-				writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
-				return
-			}
-			size, err := h.engine.ObjectSize(bucket, key)
-			if err != nil {
-				slog.Error("internal error", "error", err)
-				writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.WriteHeader(http.StatusOK)
+			// Metadata is the single source of truth for existence. A deleted object
+			// removes its metadata cluster-wide (via Raft), but a data file can
+			// linger on a replica node; do NOT fall back to the engine here or a
+			// deleted object reappears as a phantom HEAD 200 with null
+			// Last-Modified/ETag and a stale Content-Length (issue #34).
+			writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
 			return
 		}
 		if meta.VersionID != "" {

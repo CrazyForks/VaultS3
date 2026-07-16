@@ -95,6 +95,12 @@ func (h *Handler) SetLocalMultipartStore(local metadata.StoreAPI) {
 	}
 }
 
+// SetReplicaReaper wires the cluster hook that removes a deleted object's data
+// file from other nodes (issue #34 layer 2). No-op single-node.
+func (h *Handler) SetReplicaReaper(fn func(bucket, key string)) {
+	h.objects.reapReplicas = fn
+}
+
 // SetKeyManager wires the per-bucket encryption key manager (may be nil).
 func (h *Handler) SetKeyManager(m *bucketcrypto.Manager) {
 	h.buckets.keyMgr = m

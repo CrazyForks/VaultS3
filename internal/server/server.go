@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -48,6 +49,14 @@ import (
 
 // Version is the running build version, set by main from the -ldflags value.
 var Version = "dev"
+
+// reapClient issues the best-effort inter-node object-delete broadcasts (issue
+// #34 layer 2). Inter-node TLS is commonly self-signed, so verification is
+// skipped for these internal, cluster-secret-authenticated calls.
+var reapClient = &http.Client{
+	Timeout:   10 * time.Second,
+	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+}
 
 // clusterControllerAdapter adapts *cluster.Node to api.ClusterController so the
 // admin API can drive membership without importing internal/cluster's raft types.
@@ -372,6 +381,40 @@ func New(cfg *config.Config) (*Server, error) {
 	// read-after-write lag that 404'd concurrent part uploads (issue #32). `store`
 	// is the raw local store even when metaStore is the distributed one.
 	s3h.SetLocalMultipartStore(store)
+
+	// Cluster delete-reaper: after a delete, remove the object's data file from
+	// every other node so an orphan copy left by a past ring/primary change doesn't
+	// linger on disk (issue #34 layer 2). Best-effort + async — correctness already
+	// comes from metadata being authoritative, this only reclaims disk.
+	if clusterProxy != nil {
+		reapSecret := cfg.Cluster.Secret
+		reapSelf := cfg.Cluster.NodeID
+		reapScheme := "http"
+		if cfg.Server.TLS.Enabled {
+			reapScheme = "https"
+		}
+		s3h.SetReplicaReaper(func(bucket, key string) {
+			for id, addr := range clusterProxy.NodeAddrs() {
+				if id == reapSelf || addr == "" {
+					continue
+				}
+				u := reapScheme + "://" + addr + "/cluster/object-delete?bucket=" +
+					url.QueryEscape(bucket) + "&key=" + url.QueryEscape(key)
+				go func(u string) {
+					req, err := http.NewRequest(http.MethodPost, u, nil)
+					if err != nil {
+						return
+					}
+					if reapSecret != "" {
+						req.Header.Set("X-Cluster-Secret", reapSecret)
+					}
+					if resp, err := reapClient.Do(req); err == nil {
+						resp.Body.Close()
+					}
+				}(u)
+			}
+		})
+	}
 
 	// Per-bucket encryption keys: when a master key is configured, opting a bucket
 	// into SSE-S3 provisions a per-bucket data key (see
@@ -825,6 +868,7 @@ func (s *Server) Run() error {
 		mux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
 		mux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		mux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		mux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())
@@ -998,6 +1042,7 @@ func (s *Server) Run() error {
 		interNodeMux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
 		interNodeMux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		interNodeMux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		interNodeMux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())

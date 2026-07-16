@@ -197,6 +197,26 @@ func (h *APIHandler) ClusterDrainHandler(secret string) http.HandlerFunc {
 	}
 }
 
+// ClusterObjectDeleteHandler removes a single object's data file from THIS node's
+// local engine only (no metadata, no proxy). The delete coordinator broadcasts it
+// to every node to reap replica/orphan copies left after a delete, so deleted
+// data doesn't linger on disk (issue #34 layer 2). Cluster-secret authed;
+// best-effort — a missing file is not an error.
+func (h *APIHandler) ClusterObjectDeleteHandler(secret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if secret != "" && !hmac.Equal([]byte(r.Header.Get(clusterSecretHeader)), []byte(secret)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		bucket := r.URL.Query().Get("bucket")
+		key := r.URL.Query().Get("key")
+		if bucket != "" && key != "" && h.engine != nil {
+			_ = h.engine.DeleteObject(bucket, key) // best-effort; missing file is fine
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
 // handleClusterRebalance handles POST /api/v1/cluster/rebalance: trigger a
 // background pass that moves objects to their correct hash-ring owner (used after
 // membership changes to evacuate or absorb a node's data).
