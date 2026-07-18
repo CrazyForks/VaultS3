@@ -46,8 +46,8 @@ func TestDashboardHandler(t *testing.T) {
 		if !strings.Contains(body, `"/dashboard/assets/`) {
 			t.Fatalf("expected unprefixed asset URLs, got: %s", body)
 		}
-		if !strings.Contains(body, `window.__VAULTS3_BASE__="";`) {
-			t.Fatalf("expected empty base global, got: %s", body)
+		if !strings.Contains(body, `<meta name="vaults3-base" content="">`) {
+			t.Fatalf("expected empty base meta, got: %s", body)
 		}
 	})
 
@@ -59,8 +59,8 @@ func TestDashboardHandler(t *testing.T) {
 		if !strings.Contains(body, `"/vaults3/dashboard/assets/`) {
 			t.Fatalf("assets not prefixed with base: %s", body)
 		}
-		if !strings.Contains(body, `window.__VAULTS3_BASE__="/vaults3";`) {
-			t.Fatalf("base global not set: %s", body)
+		if !strings.Contains(body, `<meta name="vaults3-base" content="/vaults3">`) {
+			t.Fatalf("base meta not set: %s", body)
 		}
 	})
 
@@ -73,8 +73,8 @@ func TestDashboardHandler(t *testing.T) {
 		if !strings.Contains(body, `"/proxied/dashboard/assets/`) {
 			t.Fatalf("forwarded prefix not applied: %s", body)
 		}
-		if !strings.Contains(body, `window.__VAULTS3_BASE__="/proxied";`) {
-			t.Fatalf("base global from header not set: %s", body)
+		if !strings.Contains(body, `<meta name="vaults3-base" content="/proxied">`) {
+			t.Fatalf("base meta from header not set: %s", body)
 		}
 	})
 

@@ -6,6 +6,16 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.23] - 2026-07-18
+### Fixed
+- **Reverse-proxy subpath now works under the dashboard's CSP** (issue #36
+  follow-up). v4.4.22 exposed the base path via an inline `<script>`, but the
+  dashboard's own Content-Security-Policy (`default-src 'self'`, no
+  `script-src 'unsafe-inline'`) blocks inline scripts, so the SPA router never
+  picked up the base and client-side routing broke behind a subpath (assets loaded
+  fine). The base path is now published as a `<meta name="vaults3-base">` tag,
+  which CSP does not restrict, and the frontend reads it from there.
+
 ## [4.4.22] - 2026-07-18
 ### Added
 - **Host the dashboard under a reverse-proxy subpath** (issue #36). The dashboard
@@ -780,7 +790,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.22...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.23...HEAD
+[4.4.23]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.22...v4.4.23
 [4.4.22]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.21...v4.4.22
 [4.4.21]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.20...v4.4.21
 [4.4.20]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.19...v4.4.20

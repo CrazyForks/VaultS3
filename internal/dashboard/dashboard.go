@@ -74,8 +74,8 @@ func serveIndex(w http.ResponseWriter, indexHTML []byte, base string) {
 }
 
 // renderIndex rewrites the embedded index.html for a given base subpath. base is
-// already sanitized (safe path chars, no trailing slash), so string-quoting it is
-// safe. base == "" returns the HTML unchanged apart from an empty base global.
+// already sanitized (safe path chars, no trailing slash), so it's safe in an HTML
+// attribute. base == "" leaves an empty base meta.
 func renderIndex(indexHTML []byte, base string) []byte {
 	s := string(indexHTML)
 	if base != "" {
@@ -83,9 +83,12 @@ func renderIndex(indexHTML []byte, base string) []byte {
 		// prefix them with the base so the browser requests <base>/dashboard/...
 		s = strings.ReplaceAll(s, `"/dashboard/`, `"`+base+`/dashboard/`)
 	}
-	// Inject the runtime base the SPA reads for its router basename + API base.
+	// Expose the runtime base the SPA reads for its router basename + API base as a
+	// <meta> tag rather than an inline <script>: the dashboard's own CSP is
+	// `default-src 'self'` with no script-src 'unsafe-inline', so an inline script
+	// would be blocked (issue #36). A meta tag is not executable, so it's exempt.
 	s = strings.Replace(s, "<head>",
-		"<head>\n    <script>window.__VAULTS3_BASE__=\""+base+"\";</script>", 1)
+		"<head>\n    <meta name=\"vaults3-base\" content=\""+base+"\">", 1)
 	return []byte(s)
 }
 
