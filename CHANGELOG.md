@@ -6,6 +6,15 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.21] - 2026-07-17
+### Fixed
+- **Dashboard file browser now shows folder dates** (issue #35 follow-up). v4.4.20
+  made the API return a Last-Modified for folders, but the dashboard's file list
+  still hardcoded `-` in the Modified column for folder rows, so the date never
+  showed. The column now renders the folder's date (falling back to `-` only when
+  genuinely absent). This works on existing buckets — the date is computed from
+  the folder's contents at list time, so no re-migration is needed.
+
 ## [4.4.20] - 2026-07-16
 ### Changed
 - **Folder listings now carry a Last-Modified date** (issue #35). S3 "folders"
@@ -759,7 +768,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.20...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.21...HEAD
+[4.4.21]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.20...v4.4.21
 [4.4.20]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.19...v4.4.20
 [4.4.19]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.18...v4.4.19
 [4.4.18]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.17...v4.4.18

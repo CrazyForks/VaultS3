@@ -594,7 +594,8 @@ export default function FileBrowserPage() {
                         {obj.isPrefix ? 'Folder' : (obj.contentType || '-')}
                       </td>
                       <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                        {obj.isPrefix ? '-' : formatDate(obj.lastModified)}
+                        {/* Folders now carry a date too (issue #35); formatDate returns '-' when absent. */}
+                        {formatDate(obj.lastModified)}
                       </td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {!obj.isPrefix && (
