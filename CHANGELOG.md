@@ -6,6 +6,18 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.24] - 2026-07-19
+### Fixed
+- **S3 API works behind a reverse-proxy subpath** (issue #36 follow-up). With the
+  dashboard hosted under a subpath (e.g. `/sistemas/s3-nac`), S3 requests returned
+  `403 AccessDenied: signature mismatch`. SigV4 signs the request URI, so a client
+  pointed at the proxied endpoint signs `/<base>/bucket/key`, but the proxy strips
+  the prefix and VaultS3 verified the signature over the bare `/bucket/key`. The
+  authenticator now reconstructs the signed path from `server.base_path` (or the
+  proxy's `X-Forwarded-Prefix` header) before verifying, so signatures match. With
+  no base path (default) verification is byte-for-byte unchanged, and a spoofed
+  prefix can't bypass auth — it only changes the expected signature.
+
 ## [4.4.23] - 2026-07-18
 ### Fixed
 - **Reverse-proxy subpath now works under the dashboard's CSP** (issue #36
@@ -790,7 +802,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.23...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.24...HEAD
+[4.4.24]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.23...v4.4.24
 [4.4.23]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.22...v4.4.23
 [4.4.22]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.21...v4.4.22
 [4.4.21]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.20...v4.4.21

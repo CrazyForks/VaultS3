@@ -24,6 +24,37 @@ type Authenticator struct {
 	store           metadata.StoreAPI
 	globalAllowCIDR []string
 	globalBlockCIDR []string
+	basePath        string // reverse-proxy subpath the client signed but a path-stripping proxy removed (issue #36)
+}
+
+// SetBasePath configures the reverse-proxy subpath (e.g. "/vaults3") under which
+// clients reach the S3 API. Behind such a proxy the client signs the URI with the
+// prefix but the proxy strips it, so SigV4 verification must add it back to match
+// (issue #36). Empty = served at the root (signature verification unchanged).
+func (a *Authenticator) SetBasePath(p string) { a.basePath = normalizeBasePrefix(p) }
+
+// canonicalBasePrefix returns the subpath to prepend to r.URL.Path when rebuilding
+// the canonical URI the client signed. Configured base_path wins; otherwise the
+// proxy's X-Forwarded-Prefix header. "" when not behind a subpath, so the
+// canonical request is then byte-for-byte identical to before.
+func (a *Authenticator) canonicalBasePrefix(r *http.Request) string {
+	if a.basePath != "" {
+		return a.basePath
+	}
+	return normalizeBasePrefix(r.Header.Get("X-Forwarded-Prefix"))
+}
+
+// normalizeBasePrefix trims a subpath to a canonical "/prefix" (leading slash, no
+// trailing slash); "" for empty or "/".
+func normalizeBasePrefix(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return strings.TrimRight(p, "/")
 }
 
 func NewAuthenticator(accessKey, secretKey string, store metadata.StoreAPI, allowCIDR, blockCIDR []string) *Authenticator {
@@ -183,7 +214,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (*iam.Identity, error) {
 		}
 	}
 
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
+	canonicalRequest := buildCanonicalRequest(r, signedHeaders, a.canonicalBasePrefix(r))
 	stringToSign := buildStringToSign(dateStr, region, service, canonicalRequest, r)
 	signingKey := deriveSigningKey(secretKey, dateStr, region, service)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
@@ -268,7 +299,8 @@ func (a *Authenticator) authenticatePresigned(r *http.Request) (*iam.Identity, e
 	// Canonical URI must preserve '/' (per-segment encoding), matching the
 	// header-auth path (issue #9). Using uriEncode() here escaped every '/' to
 	// %2F, so presigned URLs from boto3/aws-cli/SDKs always failed verification.
-	uri := uriEncodePath(r.URL.Path)
+	// basePrefix restores a reverse-proxy subpath stripped before we saw it (#36).
+	uri := uriEncodePath(a.canonicalBasePrefix(r) + r.URL.Path)
 	if uri == "" {
 		uri = "/"
 	}
@@ -326,7 +358,7 @@ func parseAuthParams(s string) map[string]string {
 // conformant SigV4 client sends for a request with no body.
 const emptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-func buildCanonicalRequest(r *http.Request, signedHeaders string) string {
+func buildCanonicalRequest(r *http.Request, signedHeaders, basePrefix string) string {
 	method := r.Method
 
 	// Canonical URI must be the strict per-segment URI-encoding of the path
@@ -334,7 +366,10 @@ func buildCanonicalRequest(r *http.Request, signedHeaders string) string {
 	// the SDKs) match for keys containing '&', '$', spaces, etc. Using the raw
 	// r.URL.Path here rejected every such key with "signature mismatch" (issue #9).
 	// For keys without special characters this is identical to the raw path.
-	uri := uriEncodePath(r.URL.Path)
+	// basePrefix restores a reverse-proxy subpath the client signed but a
+	// path-stripping proxy removed, so verification matches (issue #36); "" when
+	// not proxied, leaving the path unchanged.
+	uri := uriEncodePath(basePrefix + r.URL.Path)
 	if uri == "" {
 		uri = "/"
 	}

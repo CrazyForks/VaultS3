@@ -342,6 +342,10 @@ func New(cfg *config.Config) (*Server, error) {
 	// Initialize S3 authenticator
 	auth := s3.NewAuthenticator(cfg.Auth.AdminAccessKey, cfg.Auth.AdminSecretKey, store,
 		cfg.Security.IPAllowlist, cfg.Security.IPBlocklist)
+	// Behind a reverse-proxy subpath, the client signs the URI with the prefix that
+	// the proxy strips before we see it, so SigV4 verification must add it back to
+	// match (issue #36). Reuses server.base_path.
+	auth.SetBasePath(cfg.Server.BasePath)
 
 	// Load persisted admin credentials (overrides config/env if previously changed via dashboard)
 	if ak, sk, err := store.GetAdminCredentials(); err == nil && ak != "" && sk != "" {

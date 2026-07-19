@@ -74,8 +74,8 @@ func signV4Request(r *http.Request, accessKey, secretKey string, body []byte) {
 	// Signed headers
 	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
 
-	// Build canonical request
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
+	// Build canonical request (no reverse-proxy prefix in tests)
+	canonicalRequest := buildCanonicalRequest(r, signedHeaders, "")
 
 	// Build string to sign
 	stringToSign := buildStringToSign(dateStr, testRegion, "s3", canonicalRequest, r)
