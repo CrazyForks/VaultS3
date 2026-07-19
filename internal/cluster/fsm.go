@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
@@ -13,15 +14,25 @@ import (
 
 // FSM implements raft.FSM using the metadata.Store as the state machine.
 type FSM struct {
-	store *metadata.Store
+	store        *metadata.Store
+	appliedIndex atomic.Uint64 // last log index whose store mutation has completed (issue #37)
 }
 
 func NewFSM(store *metadata.Store) *FSM {
 	return &FSM{store: store}
 }
 
+// AppliedIndex returns the last log index this FSM has finished applying to the
+// store. Unlike raft.AppliedIndex() (which advances when an entry is dispatched
+// to the FSM goroutine), this only moves AFTER the store mutation completes, so a
+// caller can wait on it for read-your-writes (issue #37).
+func (f *FSM) AppliedIndex() uint64 { return f.appliedIndex.Load() }
+
 // Apply is called by Raft when a log entry is committed.
 func (f *FSM) Apply(log *raft.Log) interface{} {
+	// Record the index only after the store mutation below has run, so a reader
+	// waiting on AppliedIndex() is guaranteed to see this entry's effect (#37).
+	defer f.appliedIndex.Store(log.Index)
 	var cmd Command
 	if err := json.Unmarshal(log.Data, &cmd); err != nil {
 		slog.Error("fsm: failed to unmarshal command", "error", err)

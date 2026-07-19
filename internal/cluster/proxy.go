@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -42,7 +43,10 @@ func NewProxy(ring *HashRing, node *Node, placement PlacementConfig, nodeAddrs m
 // port every node serves on (Raft addresses carry the raft port, which we swap).
 func (p *Proxy) RunMembershipSync(ctx context.Context, apiPort int) {
 	p.syncMembership(apiPort)
-	t := time.NewTicker(3 * time.Second)
+	// Reconcile the ring to live Raft membership frequently so the window where two
+	// pods disagree about a key's owner (and a read is routed to a node that lacks
+	// it) stays small during membership churn (issue #37).
+	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -216,6 +220,18 @@ func (p *Proxy) getOrCreateProxy(nodeID, addr string) *httputil.ReverseProxy {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	// Fail fast when a shard owner is down or OOM-looping instead of hanging on the
+	// default (timeout-less) transport as "upstream node unavailable" (issue #37).
+	// A short dial timeout trips quickly on a dead node; ResponseHeaderTimeout
+	// bounds a hung one — but only time-to-first-byte, so large-object streaming
+	// after the headers is unaffected.
+	proxy.Transport = &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 10 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Error("proxy: upstream error", "target", nodeID, "addr", addr, "error", err)
 		http.Error(w, "upstream node unavailable", http.StatusBadGateway)

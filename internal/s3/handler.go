@@ -101,6 +101,13 @@ func (h *Handler) SetReplicaReaper(fn func(bucket, key string)) {
 	h.objects.reapReplicas = fn
 }
 
+// SetPlacementReplicator wires the cluster hook that copies a just-written
+// object's data to the other nodes in its replica set (issue #37, replica_count
+// > 1). No-op single-node / replica_count 1.
+func (h *Handler) SetPlacementReplicator(fn func(bucket, key string)) {
+	h.objects.replicatePlacement = fn
+}
+
 // SetKeyManager wires the per-bucket encryption key manager (may be nil).
 func (h *Handler) SetKeyManager(m *bucketcrypto.Manager) {
 	h.buckets.keyMgr = m

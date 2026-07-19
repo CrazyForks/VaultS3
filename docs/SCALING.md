@@ -468,6 +468,42 @@ backup:
 
 ---
 
+## 9b. Consistency model in cluster mode
+
+- **Read-your-writes for objects.** After a `PUT` is acknowledged, a `GET`/`HEAD`
+  for that object is consistent: writes commit through Raft on the leader, and the
+  node that handled the write now waits for its own state machine to apply the
+  entry before acking, so a follow-up read (which routes to the same owner) sees
+  it. This closed a window where a fast `GET`-after-`PUT` on a follower returned
+  `Object not found` (issue #37).
+- **Bucket visibility.** `BucketExists` does a barrier-on-miss: if a bucket isn't
+  found locally it catches up to the leader and re-checks, so writes right after
+  `CreateBucket` don't spuriously get `Bucket does not exist`. `ListBuckets` on a
+  follower is still eventually consistent (it may briefly show a just-deleted
+  bucket); re-list or target the leader if you need a strict view.
+- **Routing follows Raft membership.** The placement ring is reconciled to live
+  Raft membership every second, so the window where two pods disagree about a
+  key's owner during churn is small.
+- **A down/OOM node fails fast.** Proxied requests to an unreachable shard owner
+  time out quickly (short dial timeout) and return `502` instead of hanging.
+
+## 9c. Redundancy and sizing (read this before production)
+
+- **`replica_count: 1` (default) means no redundancy.** Each object lives on
+  exactly one node; if that node is down (or its disk fails) the object is
+  unavailable (or lost). Set **`placement.replica_count: 2`+** and a written
+  object's data is streamed to the other nodes in its replica set, so `GET`
+  failover serves it when the primary is down and a single flapping/OOM node can't
+  take out a shard. This replication is **best-effort and asynchronous** (eventual
+  redundancy, not synchronous write-quorum), so pair it with **erasure coding** for
+  disk-loss protection of freshly-written data.
+- **Memory sizing.** A pod that is `OOMKilled` mid-benchmark takes its shard
+  offline while it restarts (surfacing as `upstream node unavailable` /
+  `connection refused` for keys it owns). Size per-pod memory for your workload —
+  large-object multipart and high concurrency need headroom well above a few GiB.
+  This is an operational limit, not a server bug: raise the pod memory limit until
+  OOMKills stop, then any residual errors are pure consistency (addressed above).
+
 ## 10. Known limitations & caveats
 
 - **Metadata durability = Raft quorum.** Lose a majority of nodes simultaneously and cluster

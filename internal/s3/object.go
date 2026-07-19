@@ -37,13 +37,18 @@ type ObjectHandler struct {
 	// change can leave an orphan copy elsewhere; without reaping it lingers on disk
 	// (issue #34 layer 2). Best-effort and asynchronous — correctness already comes
 	// from metadata being authoritative (layer 1), this just reclaims disk.
-	reapReplicas   func(bucket, key string)
-	onNotification NotificationFunc
-	onReplication  ReplicationFunc
-	onScan         ScanFunc
-	onSearchUpdate SearchUpdateFunc
-	onLambda       LambdaFunc
-	accessUpdater  *metadata.AccessUpdater
+	reapReplicas func(bucket, key string)
+	// replicatePlacement, if set (cluster mode with replica_count > 1), copies a
+	// just-written object's data to the other nodes in its replica set so a node
+	// loss doesn't make it unavailable (issue #37). Best-effort + asynchronous —
+	// never blocks or fails the client write; GET failover already tries replicas.
+	replicatePlacement func(bucket, key string)
+	onNotification     NotificationFunc
+	onReplication      ReplicationFunc
+	onScan             ScanFunc
+	onSearchUpdate     SearchUpdateFunc
+	onLambda           LambdaFunc
+	accessUpdater      *metadata.AccessUpdater
 }
 
 // multipartStore returns the store used for in-progress multipart upload
@@ -433,6 +438,9 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 	h.applyObjectLock(r, &meta, bucket, now)
 
 	h.store.PutObjectMeta(meta)
+	if h.replicatePlacement != nil {
+		h.replicatePlacement(bucket, key) // copy data to replica-set peers (issue #37)
+	}
 
 	w.Header().Set("ETag", etag)
 	if ssecKey != nil {

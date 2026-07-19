@@ -1,9 +1,12 @@
 package cluster
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,18 +154,107 @@ func newNodeWithDeps(cfg ClusterConfig, metaStore *metadata.Store, deps raftDeps
 
 // Apply submits a command to the Raft log. Must be called on the leader.
 func (n *Node) Apply(data []byte) error {
+	_, err := n.ApplyIndexed(data)
+	return err
+}
+
+// ApplyIndexed commits data through Raft and returns the log index of the
+// committed entry. A follower that forwards a write uses this index to wait for
+// its OWN FSM to apply the entry before acking the client, so an immediate local
+// read sees the write (read-your-writes, issue #37). Leader-only.
+func (n *Node) ApplyIndexed(data []byte) (uint64, error) {
 	if n.raft.State() != raft.Leader {
-		return ErrNotLeader
+		return 0, ErrNotLeader
 	}
 	future := n.raft.Apply(data, raftTimeout)
 	if err := future.Error(); err != nil {
-		return fmt.Errorf("raft apply: %w", err)
+		return 0, fmt.Errorf("raft apply: %w", err)
 	}
 	// Check if the FSM returned an error
 	if resp := future.Response(); resp != nil {
 		if err, ok := resp.(error); ok {
-			return err
+			return 0, err
 		}
+	}
+	// On the leader the entry is already applied to the local FSM once Error()
+	// returns, so a subsequent read here is consistent.
+	return future.Index(), nil
+}
+
+// ReadBarrier blocks until this node's FSM has applied everything the leader had
+// applied at call time, making a follower read linearizable (read-your-writes for
+// state written on other nodes, e.g. a bucket created elsewhere — issue #37). A
+// no-op on the leader (it applies committed entries itself).
+func (n *Node) ReadBarrier(timeout time.Duration) error {
+	if n.IsLeader() {
+		return nil
+	}
+	idx, err := n.leaderAppliedIndex(timeout)
+	if err != nil {
+		return err
+	}
+	return n.WaitForApply(idx, timeout)
+}
+
+// leaderAppliedIndex asks the leader for its current FSM applied index over the
+// cluster channel (GET /cluster/readindex).
+func (n *Node) leaderAppliedIndex(timeout time.Duration) (uint64, error) {
+	leaderRaft := n.LeaderAddr()
+	if leaderRaft == "" {
+		return 0, fmt.Errorf("cluster: no leader for read barrier")
+	}
+	url := fmt.Sprintf("http://%s/cluster/readindex", apiAddrFromRaft(leaderRaft))
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	if n.cfg.Secret != "" {
+		req.Header.Set(clusterSecretHeader, n.cfg.Secret)
+	}
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("cluster: readindex returned %d", resp.StatusCode)
+	}
+	var out struct {
+		Index uint64 `json:"index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256)).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Index, nil
+}
+
+// ReadIndexHandler serves GET /cluster/readindex: this node's FSM applied index.
+// A follower queries the leader to learn how far to catch up before a consistent
+// read (issue #37). Cluster-secret authed.
+func (n *Node) ReadIndexHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !n.authOK(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]uint64{"index": n.fsm.AppliedIndex()})
+	}
+}
+
+// WaitForApply blocks until this node's FSM has applied up to index (or timeout).
+// Used after forwarding a write to the leader so the local node — which the same
+// client's follow-up read will hit — reflects the write (issue #37).
+func (n *Node) WaitForApply(index uint64, timeout time.Duration) error {
+	if index == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for n.fsm.AppliedIndex() < index {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("cluster: local apply lagged index %d (at %d) after %s", index, n.fsm.AppliedIndex(), timeout)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 	return nil
 }

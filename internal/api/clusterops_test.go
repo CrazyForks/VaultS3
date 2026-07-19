@@ -9,6 +9,39 @@ import (
 	"testing"
 )
 
+// TestClusterReplicaPutHandler covers issue #37 replica fan-out: the inter-node
+// replica-put endpoint stores object data on the local engine (cluster-secret
+// authed) and rejects an unauthenticated caller.
+func TestClusterReplicaPutHandler(t *testing.T) {
+	h, store := newTestAPI(t)
+	if err := store.CreateBucket("b"); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	handler := h.ClusterReplicaPutHandler("s3cr3t")
+
+	// Missing secret → 401, nothing stored.
+	rr := httptest.NewRecorder()
+	handler(rr, httptest.NewRequest(http.MethodPost, "/cluster/replica-put?bucket=b&key=k", strings.NewReader("replica-bytes")))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("no secret: status %d, want 401", rr.Code)
+	}
+	if h.engine.ObjectExists("b", "k") {
+		t.Fatal("object stored without authentication")
+	}
+
+	// Correct secret → 200, object on the local engine.
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/cluster/replica-put?bucket=b&key=k", strings.NewReader("replica-bytes"))
+	req.Header.Set(clusterSecretHeader, "s3cr3t")
+	handler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("with secret: status %d, want 200", rr.Code)
+	}
+	if !h.engine.ObjectExists("b", "k") {
+		t.Fatal("replica object not stored on the local engine")
+	}
+}
+
 // TestClusterObjectDeleteHandler covers issue #34 layer 2: the inter-node
 // object-delete endpoint removes the local engine file (cluster-secret authed)
 // and rejects an unauthenticated caller.

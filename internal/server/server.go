@@ -58,6 +58,17 @@ var reapClient = &http.Client{
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 }
 
+// replClient streams object data to replica-set peers (issue #37, replica_count >
+// 1). No overall timeout — it caps the whole request including the body, which
+// would break large objects — only dial/response-header bounds.
+var replClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 30 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+	},
+}
+
 // clusterControllerAdapter adapts *cluster.Node to api.ClusterController so the
 // admin API can drive membership without importing internal/cluster's raft types.
 type clusterControllerAdapter struct{ n *cluster.Node }
@@ -418,6 +429,52 @@ func New(cfg *config.Config) (*Server, error) {
 				}(u)
 			}
 		})
+
+		// replica_count > 1: after a write, stream the object's data to the other
+		// nodes in its replica set so a node loss doesn't make it unavailable (issue
+		// #37). Best-effort + async — never blocks/fails the client write; GET
+		// failover already tries replicas. Each peer is streamed from the engine
+		// (no whole-object buffering).
+		if cfg.Cluster.Placement.ReplicaCount > 1 {
+			repSecret := cfg.Cluster.Secret
+			repSelf := cfg.Cluster.NodeID
+			repScheme := reapScheme
+			repCount := cfg.Cluster.Placement.ReplicaCount
+			localEngine := engine
+			ring := clusterProxy.Ring()
+			s3h.SetPlacementReplicator(func(bucket, key string) {
+				addrs := clusterProxy.NodeAddrs()
+				for _, id := range ring.GetNodes(bucket, key, repCount) {
+					if id == repSelf {
+						continue
+					}
+					addr := addrs[id]
+					if addr == "" {
+						continue
+					}
+					go func(addr string) {
+						reader, size, err := localEngine.GetObject(bucket, key)
+						if err != nil {
+							return
+						}
+						defer reader.Close()
+						u := repScheme + "://" + addr + "/cluster/replica-put?bucket=" +
+							url.QueryEscape(bucket) + "&key=" + url.QueryEscape(key)
+						req, err := http.NewRequest(http.MethodPost, u, reader)
+						if err != nil {
+							return
+						}
+						req.ContentLength = size
+						if repSecret != "" {
+							req.Header.Set("X-Cluster-Secret", repSecret)
+						}
+						if resp, err := replClient.Do(req); err == nil {
+							resp.Body.Close()
+						}
+					}(addr)
+				}
+			})
+		}
 	}
 
 	// Per-bucket encryption keys: when a master key is configured, opting a bucket
@@ -871,8 +928,10 @@ func (s *Server) Run() error {
 	if s.clusterNode != nil {
 		mux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
 		mux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/readindex", s.clusterNode.ReadIndexHandler())
 		mux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/replica-put", apiHandler.ClusterReplicaPutHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		mux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		mux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())
@@ -1045,8 +1104,10 @@ func (s *Server) Run() error {
 		interNodeMux := http.NewServeMux()
 		interNodeMux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
 		interNodeMux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/readindex", s.clusterNode.ReadIndexHandler())
 		interNodeMux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/replica-put", apiHandler.ClusterReplicaPutHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		interNodeMux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
 		interNodeMux.HandleFunc("/cluster/apply", s.clusterNode.ApplyHandler())

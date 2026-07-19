@@ -343,3 +343,48 @@ func TestRaftMembershipChange(t *testing.T) {
 		t.Fatal("pre-membership-change data lost")
 	}
 }
+
+// TestReadYourWritesApplyBarrier covers issue #37: after the leader commits a
+// write, a follower's WaitForApply lets it block until its own FSM has applied
+// that index, so a read-after-write on the follower reflects the write.
+func TestReadYourWritesApplyBarrier(t *testing.T) {
+	nodes := newRaftCluster(t, 3)
+	leader := mustLeader(t, nodes)
+
+	var follower *testNode
+	for _, n := range nodes {
+		if !n.node.IsLeader() {
+			follower = n
+			break
+		}
+	}
+	if follower == nil {
+		t.Fatal("no follower found")
+	}
+
+	cmd, err := marshalCommand(CmdCreateBucket, struct{ Name string }{Name: "ryw"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	idx, err := leader.node.ApplyIndexed(cmd)
+	if err != nil {
+		t.Fatalf("ApplyIndexed on leader: %v", err)
+	}
+	if idx == 0 {
+		t.Fatal("expected a non-zero committed index")
+	}
+
+	// The follower blocks until its FSM reaches the committed index, then MUST see
+	// the write — this is the read-your-writes guarantee.
+	if err := follower.node.WaitForApply(idx, 3*time.Second); err != nil {
+		t.Fatalf("follower WaitForApply: %v", err)
+	}
+	if !follower.store.BucketExists("ryw") {
+		t.Fatal("follower did not reflect the write after the apply barrier")
+	}
+
+	// ApplyIndexed is leader-only.
+	if _, err := follower.node.ApplyIndexed(cmd); err != ErrNotLeader {
+		t.Fatalf("follower ApplyIndexed: want ErrNotLeader, got %v", err)
+	}
+}

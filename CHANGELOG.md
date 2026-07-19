@@ -6,6 +6,38 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.25] - 2026-07-19
+### Fixed
+- **Cluster read-your-writes: `GET`/`HEAD` after a `PUT` no longer returns
+  `Object not found`** (issue #37). Writes commit through Raft on the leader, but a
+  follower served reads from local state that could lag the committed log, so a
+  fast read-after-write on a follower missed the object. The node that handles a
+  write now waits for its own state machine to apply the entry (the leader returns
+  the committed index; the follower blocks on an FSM-tracked applied index) before
+  acking, so a follow-up read — which routes to the same owner — sees it.
+- **Cluster bucket visibility.** `BucketExists` now does a barrier-on-miss (catch
+  up to the leader and re-check) so a write right after `CreateBucket` no longer
+  spuriously gets `Bucket does not exist`. The barrier only costs a round-trip on
+  a miss, never on a hit.
+- **Placement ring reconciles to Raft membership every 1s** (was 3s), shrinking
+  the window where two nodes disagree about a key's owner during membership churn.
+- **A down / OOM-looping shard owner fails fast.** The cluster reverse proxy gained
+  a short dial timeout + response-header timeout, so a request to an unreachable
+  owner returns `502` quickly instead of hanging (large-object streaming after the
+  headers is unaffected).
+### Added
+- **`replica_count ≥ 2` now replicates object data across nodes** (issue #37). With
+  `placement.replica_count > 1`, a written object's data is streamed to the other
+  nodes in its replica set, so a node loss no longer makes its objects
+  unavailable — `GET` failover (which already tries replicas when the primary is
+  down) now finds a copy. Replication is best-effort and asynchronous (it never
+  blocks or fails the client write, and streams from the engine without buffering
+  the whole object), so it provides eventual redundancy rather than synchronous
+  write-quorum durability; pair it with erasure coding for disk-loss protection.
+  `replica_count: 1` (default) is unchanged.
+- Documented the cluster consistency model and per-pod memory sizing in
+  docs/SCALING.md.
+
 ## [4.4.24] - 2026-07-19
 ### Fixed
 - **S3 API works behind a reverse-proxy subpath** (issue #36 follow-up). With the
@@ -802,7 +834,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.24...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.25...HEAD
+[4.4.25]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.24...v4.4.25
 [4.4.24]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.23...v4.4.24
 [4.4.23]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.22...v4.4.23
 [4.4.22]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.21...v4.4.22

@@ -15,6 +15,9 @@ type RaftApplier interface {
 	// ForwardToLeader sends an already-serialized command to the current leader
 	// to be applied, used when this node is a follower.
 	ForwardToLeader(data []byte) error
+	// ReadBarrier blocks until this node has applied everything the leader had
+	// applied at call time, for a linearizable follower read (issue #37).
+	ReadBarrier(timeout time.Duration) error
 }
 
 // DistributedStore wraps a Store with Raft consensus for writes.
@@ -27,6 +30,21 @@ type DistributedStore struct {
 
 func NewDistributedStore(store *Store, raft RaftApplier) *DistributedStore {
 	return &DistributedStore{Store: store, raft: raft}
+}
+
+// BucketExists overrides the local read with a barrier-on-miss: a bucket created
+// on another node may not have replicated to this follower yet, so a plain local
+// check would spuriously say "does not exist" and reject writes right after
+// CreateBucket (issue #37). On a local miss we catch up to the leader and re-check;
+// the barrier only costs a round-trip on the (rare) miss, never on a hit.
+func (d *DistributedStore) BucketExists(name string) bool {
+	if d.Store.BucketExists(name) {
+		return true
+	}
+	if d.raft.ReadBarrier(2 * time.Second); d.Store.BucketExists(name) {
+		return true
+	}
+	return false
 }
 
 // Command types — must match cluster.CommandType values.

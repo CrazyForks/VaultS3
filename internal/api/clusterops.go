@@ -217,6 +217,30 @@ func (h *APIHandler) ClusterObjectDeleteHandler(secret string) http.HandlerFunc 
 	}
 }
 
+// ClusterReplicaPutHandler stores an object's data on THIS node's local engine
+// (no metadata write — that arrives via Raft — and no re-fan-out). The primary
+// broadcasts here to keep replica copies so a node loss doesn't make an object
+// unavailable (issue #37, replica_count > 1). Cluster-secret authed.
+func (h *APIHandler) ClusterReplicaPutHandler(secret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if secret != "" && !hmac.Equal([]byte(r.Header.Get(clusterSecretHeader)), []byte(secret)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		bucket := r.URL.Query().Get("bucket")
+		key := r.URL.Query().Get("key")
+		if bucket == "" || key == "" || h.engine == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if _, _, err := h.engine.PutObject(bucket, key, r.Body, r.ContentLength); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
 // handleClusterRebalance handles POST /api/v1/cluster/rebalance: trigger a
 // background pass that moves objects to their correct hash-ring owner (used after
 // membership changes to evacuate or absorb a node's data).
