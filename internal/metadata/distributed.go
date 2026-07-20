@@ -15,9 +15,6 @@ type RaftApplier interface {
 	// ForwardToLeader sends an already-serialized command to the current leader
 	// to be applied, used when this node is a follower.
 	ForwardToLeader(data []byte) error
-	// ReadBarrier blocks until this node has applied everything the leader had
-	// applied at call time, for a linearizable follower read (issue #37).
-	ReadBarrier(timeout time.Duration) error
 }
 
 // DistributedStore wraps a Store with Raft consensus for writes.
@@ -32,32 +29,50 @@ func NewDistributedStore(store *Store, raft RaftApplier) *DistributedStore {
 	return &DistributedStore{Store: store, raft: raft}
 }
 
-// BucketExists overrides the local read with a barrier-on-miss: a bucket created
-// on another node may not have replicated to this follower yet, so a plain local
-// check would spuriously say "does not exist" and reject writes right after
-// CreateBucket (issue #37). On a local miss we catch up to the leader and re-check;
-// the barrier only costs a round-trip on the (rare) miss, never on a hit.
+// ReadYourWritesTimeout bounds how long a follower waits for a just-written key to
+// replicate locally before giving up and reporting not-found. Exported so tests
+// can shorten it.
+var ReadYourWritesTimeout = 2 * time.Second
+
+// waitReplicated polls present() until it reports true, this node is the leader
+// (whose store is authoritative — a miss there is genuinely absent), or the
+// timeout elapses. This gives read-your-writes on a follower by waiting for the
+// write to arrive through normal Raft replication (which reaches every node),
+// with NO inter-node RPC — so it is robust regardless of proxy/network topology
+// (issue #37).
+func (d *DistributedStore) waitReplicated(present func() bool) {
+	if d.raft.IsLeader() {
+		return
+	}
+	deadline := time.Now().Add(ReadYourWritesTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(15 * time.Millisecond)
+		if present() {
+			return
+		}
+	}
+}
+
+// BucketExists waits on a miss for a bucket created on another node to replicate
+// here, so a write right after CreateBucket doesn't spuriously get "Bucket does
+// not exist" (issue #37). Only the read path waits; writes stay fast.
 func (d *DistributedStore) BucketExists(name string) bool {
 	if d.Store.BucketExists(name) {
 		return true
 	}
-	if d.raft.ReadBarrier(2 * time.Second); d.Store.BucketExists(name) {
-		return true
-	}
-	return false
+	d.waitReplicated(func() bool { return d.Store.BucketExists(name) })
+	return d.Store.BucketExists(name)
 }
 
-// GetObjectMetaConsistent does a barrier-on-miss so the object GET/HEAD read path
-// is read-your-writes: an object written on another node (or on this follower via
-// a forwarded write) that hasn't replicated here yet would otherwise 404 a just-
-// PUT object. Only the WRITE path (which uses plain GetObjectMeta) stays fast, so
-// this adds no per-write latency — the barrier only fires on the rare read that
-// races a write, and a genuine miss still returns not-found (issue #37).
+// GetObjectMetaConsistent waits on a miss for a just-written object's metadata to
+// replicate to this node, so a GET/HEAD right after a PUT on another node doesn't
+// spuriously 404 (issue #37). The WRITE path uses plain GetObjectMeta and stays
+// fast; a genuine miss returns not-found after the wait.
 func (d *DistributedStore) GetObjectMetaConsistent(bucket, key string) (*ObjectMeta, error) {
 	if meta, err := d.Store.GetObjectMeta(bucket, key); meta != nil {
 		return meta, err
 	}
-	_ = d.raft.ReadBarrier(2 * time.Second)
+	d.waitReplicated(func() bool { m, _ := d.Store.GetObjectMeta(bucket, key); return m != nil })
 	return d.Store.GetObjectMeta(bucket, key)
 }
 

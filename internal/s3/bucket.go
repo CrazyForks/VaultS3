@@ -101,8 +101,21 @@ func (h *BucketHandler) CreateBucket(w http.ResponseWriter, r *http.Request, buc
 		return
 	}
 
+	if h.store.BucketExists(bucket) {
+		writeS3Error(w, "BucketAlreadyExists", "The requested bucket name is not available.", http.StatusConflict)
+		return
+	}
 	if err := h.store.CreateBucket(bucket); err != nil {
-		writeS3Error(w, "BucketAlreadyExists", err.Error(), http.StatusConflict)
+		// A concurrent create (or a replicated one this node hadn't seen) races here;
+		// treat only an "already exists" error as 409 and surface a clean message —
+		// don't leak the internal cluster error, and don't misreport a genuine
+		// failure (e.g. an unreachable leader) as BucketAlreadyExists.
+		if strings.Contains(err.Error(), "already exists") {
+			writeS3Error(w, "BucketAlreadyExists", "The requested bucket name is not available.", http.StatusConflict)
+			return
+		}
+		slog.Error("create bucket", "bucket", bucket, "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 		return
 	}
 

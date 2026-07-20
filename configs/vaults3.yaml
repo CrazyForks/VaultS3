@@ -217,7 +217,7 @@ cluster:
   peers: []                    # ["node-2@host2:9001", "node-3@host3:9001"]
   peer_apis: {}                # nodeID → "host:apiPort" for proxying
   placement:
-    replica_count: 3
+    replica_count: 3           # keep >= 2 in production: with 1 copy a read can miss during ring churn
     read_quorum: 2
     write_quorum: 2
     virtual_nodes: 128

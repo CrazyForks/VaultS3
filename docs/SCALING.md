@@ -471,19 +471,22 @@ backup:
 ## 9b. Consistency model in cluster mode
 
 - **Read-your-writes for objects.** After a `PUT` is acknowledged, a `GET`/`HEAD`
-  for that object is consistent: writes commit through Raft on the leader, and the
-  node that handled the write now waits for its own state machine to apply the
-  entry before acking, so a follow-up read (which routes to the same owner) sees
-  it. This closed a window where a fast `GET`-after-`PUT` on a follower returned
-  `Object not found` (issue #37).
-- **Bucket visibility.** `BucketExists` does a barrier-on-miss: if a bucket isn't
-  found locally it catches up to the leader and re-checks, so writes right after
-  `CreateBucket` don't spuriously get `Bucket does not exist`. `ListBuckets` on a
-  follower is still eventually consistent (it may briefly show a just-deleted
+  for that object is consistent: writes commit through Raft, and if the read misses
+  on the owner (a follower whose state machine hasn't applied the entry yet) the
+  read waits for the write to replicate in — polling local state until it lands or
+  a 2s timeout — before returning. This waits on normal Raft replication with no
+  extra inter-node RPC, so it is robust behind any proxy or network topology. The
+  write path stays fast and a genuine miss still returns `404` (issue #37).
+- **Bucket visibility.** `BucketExists` uses the same wait-on-miss, so writes right
+  after `CreateBucket` don't spuriously get `Bucket does not exist`. `ListBuckets`
+  on a follower is still eventually consistent (it may briefly show a just-deleted
   bucket); re-list or target the leader if you need a strict view.
 - **Routing follows Raft membership.** The placement ring is reconciled to live
   Raft membership every second, so the window where two pods disagree about a
-  key's owner during churn is small.
+  key's owner during churn is small. With `replica_count: 1` a key's data lives on
+  a single node, so during that brief reconcile window a read that routes to the
+  wrong node can miss; set `placement.replica_count: 2` (or more) for production so
+  more than one node holds each object and reads survive churn and node loss.
 - **A down/OOM node fails fast.** Proxied requests to an unreachable shard owner
   time out quickly (short dial timeout) and return `502` instead of hanging.
 

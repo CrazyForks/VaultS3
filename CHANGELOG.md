@@ -6,6 +6,34 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.29] - 2026-07-20
+### Fixed
+- **Cluster read-your-writes no longer depends on an inter-node RPC** (issue #37,
+  thanks @kesavkolla). v4.4.27's read-side barrier asked the leader for its applied
+  index over `/cluster/readindex` (derived via the same hardcoded-port address that
+  was already wrong behind a split proxy in issue #29); when that call didn't reach
+  the leader the barrier silently no-opped, so a `GET`/`HEAD` right after a `PUT`
+  returned `Object not found` on a follower until replication caught up (~500ms).
+  The consistent read now simply **polls the local store** until the just-written
+  key replicates in through normal Raft (which reaches every node) or a 2s timeout
+  elapses — no RPC, no derived addresses, so it is robust regardless of proxy or
+  network topology. The leader (authoritative) never waits, the write path stays
+  fast, and a genuine miss still returns `404` after the wait. Validated on a
+  latency-injected multi-node cluster: 0 misses on tight sequential `PUT`→`GET` and
+  on 5000 objects at `--concurrent=128`. For resilience to node/pod churn (when the
+  placement ring is briefly reconciling), run `placement.replica_count: 2` so more
+  than one node holds each object's data.
+
+## [4.4.28] - 2026-07-20
+### Fixed
+- **`CreateBucket` on an existing bucket returns a clean `409 BucketAlreadyExists`.**
+  In cluster mode the error message leaked the internal forwarding error
+  (`cluster: leader rejected forwarded write (500): ...`), and any `CreateBucket`
+  error was mapped to `BucketAlreadyExists` — so a genuine failure (e.g. an
+  unreachable leader) would be misreported. The handler now checks existence first
+  and returns a clean AWS-style message, treats only an "already exists" error as
+  `409`, and surfaces other failures as `500 InternalError`.
+
 ## [4.4.27] - 2026-07-19
 ### Changed
 - **Cluster read-your-writes reworked to a read-side barrier** (issue #37). v4.4.25
@@ -859,7 +887,9 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.27...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.29...HEAD
+[4.4.29]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.28...v4.4.29
+[4.4.28]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.27...v4.4.28
 [4.4.27]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.26...v4.4.27
 [4.4.26]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.25...v4.4.26
 [4.4.25]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.24...v4.4.25
