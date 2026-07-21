@@ -6,6 +6,19 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.34] - 2026-07-21
+### Fixed
+- **`/cluster/ownership` diagnostic now reaches its handler regardless of path
+  shape** (issue #37 diagnosis). It was registered only as the exact path
+  `/cluster/ownership`, so a trailing slash (`/cluster/ownership/`), a path-style
+  call (`/cluster/ownership/<bucket>/<key>`), or an LB that appends a slash fell
+  through to the S3 bucket handler and returned `NoSuchBucket`/`AccessDenied` — which
+  looked like the ownership view was reading a different store than the S3 path, when
+  in fact the request never hit the endpoint. The handler is now registered for both
+  the exact path and the subtree and accepts the bucket/key from either the query
+  string or the path, so all call shapes return the JSON ownership view. (The exact
+  query form `?bucket=&key=` already worked on v4.4.33.)
+
 ## [4.4.33] - 2026-07-20
 ### Added
 - **`GET /cluster/ownership?bucket=&key=` diagnostic endpoint** to localize the
@@ -951,7 +964,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.33...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...HEAD
+[4.4.34]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.33...v4.4.34
 [4.4.33]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.32...v4.4.33
 [4.4.32]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.31...v4.4.32
 [4.4.31]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.30...v4.4.31

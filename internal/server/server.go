@@ -934,15 +934,29 @@ func (s *Server) Run() error {
 		// they disagree on "owner", the placement ring is inconsistent across pods
 		// (the read-after-write miss cause); if they agree but the owner lacks data,
 		// it's placement; if only metadata lags, it's replication.
-		mux.HandleFunc("/cluster/ownership", func(w http.ResponseWriter, r *http.Request) {
+		ownershipHandler := func(w http.ResponseWriter, r *http.Request) {
 			// Reveals object existence + cluster topology, and this is the public S3
 			// port, so require the cluster secret when one is configured.
 			if s.cfg.Cluster.Secret != "" && !hmac.Equal([]byte(r.Header.Get("X-Cluster-Secret")), []byte(s.cfg.Cluster.Secret)) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+			if s.clusterProxy == nil {
+				http.Error(w, "cluster proxy not initialized", http.StatusServiceUnavailable)
+				return
+			}
 			bucket := r.URL.Query().Get("bucket")
 			key := r.URL.Query().Get("key")
+			// Path-style fallback so a trailing slash or LB path-rewrite can't route
+			// this to the S3 handler: /cluster/ownership/<bucket>/<key...>.
+			if bucket == "" {
+				rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/cluster/ownership"), "/")
+				if i := strings.IndexByte(rest, '/'); i >= 0 {
+					bucket, key = rest[:i], rest[i+1:]
+				} else {
+					bucket = rest
+				}
+			}
 			ring := s.clusterProxy.Ring()
 			rc := s.clusterProxy.Placement().ReplicaCount
 			if rc < 1 {
@@ -977,7 +991,12 @@ func (s *Server) Run() error {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, "{\"node\":%q,\"owner\":%q,\"self_is_owner\":%v,\"holders\":%s,\"would_proxy_to\":%q,\"meta_present_local\":%v,\"data_present_local\":%v,\"ring_members\":%s}\n",
 				s.cfg.Cluster.NodeID, owner, owner == s.cfg.Cluster.NodeID, jarr(ring.GetNodes(bucket, key, rc)), would, metaLocal, dataLocal, jarr(ring.Nodes()))
-		})
+		}
+		// Register the exact path AND the subtree, so a trailing slash or a
+		// path-style call (/cluster/ownership/<bucket>/<key>) still reaches this
+		// handler instead of falling through to the S3 bucket handler.
+		mux.HandleFunc("/cluster/ownership", ownershipHandler)
+		mux.HandleFunc("/cluster/ownership/", ownershipHandler)
 		mux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/readindex", s.clusterNode.ReadIndexHandler())
 		mux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
