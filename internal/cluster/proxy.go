@@ -122,6 +122,31 @@ func (p *Proxy) OwnerAPIAddr(bucket, key string) (string, bool) {
 	return addr, true
 }
 
+// ForwardReadToLeader forwards a consistency-sensitive read to the current Raft
+// leader and reports whether it did so. The leader is the only node guaranteed to
+// have every committed write applied to its FSM (raft.Apply completes after the
+// local apply), so a bucket listing served there cannot miss a key a client just
+// PUT, whereas a lagging follower's local index can (issue #37). Object GET/HEAD do
+// not need this because they wait out replication with a per-key barrier; a listing
+// has no single key to wait on, so we route it to the authoritative node instead.
+//
+// Returns true when the request was forwarded (caller must stop). Returns false when
+// this node should serve it locally: it is the leader, or no leader is currently
+// known (local is then the best available answer). Uses no inter-node RPC, only the
+// leader identity Raft already tracks, so it is robust to the proxy/network topology
+// that made the earlier read-index approach fail.
+func (p *Proxy) ForwardReadToLeader(w http.ResponseWriter, r *http.Request) bool {
+	if p.node.IsLeader() {
+		return false
+	}
+	leader := p.node.LeaderID()
+	if leader == "" || leader == p.node.NodeID() {
+		return false
+	}
+	p.ForwardRequest(w, r, leader)
+	return true
+}
+
 // ShouldProxy checks if a request for the given bucket/key should be proxied
 // to another node. Returns the target node ID if proxying is needed,
 // or empty string if this node should handle it.

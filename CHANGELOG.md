@@ -6,6 +6,27 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.35] - 2026-07-22
+### Fixed
+- **Cluster read-after-write miss root-caused and fixed: bucket listings are now
+  served by the Raft leader** (issue #37). The reported symptom was a `HEAD`/stat
+  right after a `PUT` returning "Object not found" on a multi-node cluster while a
+  `GET` for the same key succeeded. Tracing the client showed `mc stat` (and warp's
+  verification) issues a `ListObjectsV2` *before* the `HEAD`, and reports the object
+  missing if that list comes back empty. Object `GET`/`HEAD` are owner-routed and
+  wait out replication with a per-key barrier, but a listing is bucket-wide with no
+  single key to wait on: it was answered from a follower whose Raft FSM had not yet
+  applied the just-committed write (the leader commits on a quorum and does not block
+  on lagging followers), so the new key was absent from the list. Listings
+  (`ListObjects` v1/v2, `ListObjectVersions`, and bucket sub-resource reads) are now
+  forwarded to the current leader, which has every committed write applied, giving
+  read-your-writes for enumerations. This uses only the leader identity Raft already
+  tracks (no inter-node read-index RPC, which earlier attempts showed is unreliable
+  under this topology). In-progress multipart listing (`?uploads`) stays node-local
+  (issue #32) and object `GET`/`HEAD` keep owner routing.
+- **`VAULTS3_TRACE_READS=1` now also logs `HEAD` 404s.** It previously logged only
+  `GET` misses, so the operation that actually failed was invisible to the trace.
+
 ## [4.4.34] - 2026-07-21
 ### Fixed
 - **`/cluster/ownership` diagnostic now reaches its handler regardless of path
@@ -964,7 +985,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...HEAD
+[4.4.35]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...v4.4.35
 [4.4.34]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.33...v4.4.34
 [4.4.33]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.32...v4.4.33
 [4.4.32]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.31...v4.4.32

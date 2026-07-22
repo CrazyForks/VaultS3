@@ -496,10 +496,21 @@ func New(cfg *config.Config) (*Server, error) {
 	// Wire cluster proxy into S3 handler (use failover proxy if available)
 	if failoverProxy != nil {
 		s3h.SetClusterProxy(func(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+			// A bucket listing must be answered by a node that has every committed
+			// write applied, or a list right after a PUT misses the just-written key
+			// on a lagging follower (issue #37: `mc stat` lists before it HEADs, so
+			// this surfaced as a phantom read-after-write miss). Route listings to the
+			// leader; object GET/HEAD keep owner routing + the per-key barrier.
+			if requiresLeaderRead(r, bucket, key) {
+				return failoverProxy.ForwardReadToLeader(w, r)
+			}
 			return failoverProxy.ForwardWithRetry(w, r, bucket, key)
 		})
 	} else if clusterProxy != nil {
 		s3h.SetClusterProxy(func(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+			if requiresLeaderRead(r, bucket, key) {
+				return clusterProxy.ForwardReadToLeader(w, r)
+			}
 			targetNode := clusterProxy.ShouldProxy(bucket, key)
 			if targetNode == "" {
 				return false
@@ -1272,6 +1283,23 @@ func (s *Server) Run() error {
 
 	slog.Info("server stopped gracefully")
 	return nil
+}
+
+// requiresLeaderRead reports whether a request is a bucket-wide read whose result
+// depends on fully-replicated metadata, so it must be served by the Raft leader for
+// read-your-writes consistency (issue #37). This covers object listings (ListObjects
+// v1/v2, ListObjectVersions) and bucket sub-resource reads, all keyed at the bucket
+// level (key == "") via GET. It deliberately excludes ListMultipartUploads
+// (?uploads): in-progress multipart state is kept node-local alongside the part data
+// (issue #32), so the leader is not authoritative for it and it keeps owner routing.
+func requiresLeaderRead(r *http.Request, bucket, key string) bool {
+	if bucket == "" || key != "" || r.Method != http.MethodGet {
+		return false
+	}
+	if _, ok := r.URL.Query()["uploads"]; ok {
+		return false
+	}
+	return true
 }
 
 func initBuiltinPolicies(store *metadata.Store) {

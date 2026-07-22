@@ -1006,6 +1006,13 @@ func (h *ObjectHandler) HeadObject(w http.ResponseWriter, r *http.Request, bucke
 			// linger on a replica node; do NOT fall back to the engine here or a
 			// deleted object reappears as a phantom HEAD 200 with null
 			// Last-Modified/ETag and a stale Content-Length (issue #34).
+			//
+			// Trace the HEAD miss (method + whether it was proxied here) so a
+			// read-after-write HEAD 404 is visible to VAULTS3_TRACE_READS the same way
+			// a GET miss is — HEAD is the operation `mc stat`/`warp` verify with, so
+			// this is the line that localizes the miss to the owner vs a non-owner
+			// (issue #37).
+			traceRead404(r, "HEAD", bucket, key, "meta_nil")
 			writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
 			return
 		}
