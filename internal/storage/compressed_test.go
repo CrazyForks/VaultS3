@@ -102,3 +102,49 @@ func TestCompressedReadsRawWhenNoMagic(t *testing.T) {
 		t.Fatalf("raw passthrough failed: got %q", got)
 	}
 }
+
+// TestCompressedStreamingSizeAndSeek covers the issue #38 streaming read path: a
+// compressed object reports the correct decompressed size (read from the frame
+// header, not by decompressing) and still supports Seek for Range/partNumber reads
+// (which materializes on demand).
+func TestCompressedStreamingSizeAndSeek(t *testing.T) {
+	ce, _ := newCompressed(t)
+	// Large-ish, compressible payload so the stored blob is much smaller than the
+	// reported size — proving the size did not come from the compressed length.
+	plain := bytes.Repeat([]byte("VaultS3 streaming decompression test payload 0123456789\n"), 20000)
+
+	if _, _, err := ce.PutObject("b", "big.txt", bytes.NewReader(plain), int64(len(plain))); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	rc, n, err := ce.GetObject("b", "big.txt")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer rc.Close()
+	if n != int64(len(plain)) {
+		t.Fatalf("reported size %d, want %d (decompressed)", n, len(plain))
+	}
+
+	// Seek into the middle (Range path) and read a window; it must match the plaintext.
+	const off = 12345
+	if _, err := rc.Seek(off, io.SeekStart); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+	win := make([]byte, 100)
+	if _, err := io.ReadFull(rc, win); err != nil {
+		t.Fatalf("ReadFull after seek: %v", err)
+	}
+	if !bytes.Equal(win, plain[off:off+100]) {
+		t.Fatalf("seeked window mismatch at %d", off)
+	}
+
+	// Seek back to start and stream the whole object; it must be byte-identical.
+	if _, err := rc.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(0): %v", err)
+	}
+	full, _ := io.ReadAll(rc)
+	if !bytes.Equal(full, plain) {
+		t.Fatalf("full re-read mismatch: got %d bytes", len(full))
+	}
+}

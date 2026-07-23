@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/md5"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -158,18 +159,64 @@ func (c *CompressedEngine) compressAndPut(reader io.Reader, putFn func(io.Reader
 }
 
 // getAndDecompress reads compressed data from inner engine, decompresses it.
+// getAndDecompress returns the object's plaintext as a STREAMING reader whose
+// time-to-first-byte does not depend on object size (issue #38). zstd and gzip are
+// both streaming codecs, and both record the decompressed size in the container (zstd
+// frame header, gzip trailing ISIZE), so we can report Content-Length without first
+// materializing the object. Only Range/partNumber reads (which Seek) fall back to
+// buffering, since the codecs are not seekable. If the stored blob matches neither
+// magic (written while compression was off) it is streamed through untouched, and if
+// the size cannot be read cheaply we fall back to the old buffered decode.
 func (c *CompressedEngine) getAndDecompress(getFn func() (ReadSeekCloser, int64, error)) (ReadSeekCloser, int64, error) {
-	reader, _, err := getFn()
+	src, storedSize, err := getFn()
 	if err != nil {
 		return nil, 0, err
 	}
-	defer reader.Close()
 
-	compressed, err := io.ReadAll(reader)
+	magic := make([]byte, 4)
+	n, _ := io.ReadFull(src, magic)
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		// Source is not seekable — cannot peek/stream, use the buffered path.
+		return c.bufferedDecompress(src)
+	}
+
+	switch {
+	case n >= 4 && magic[0] == 0x28 && magic[1] == 0xB5 && magic[2] == 0x2F && magic[3] == 0xFD:
+		size, ok := zstdContentSize(src)
+		if !ok || size > maxCompressedSize {
+			return c.bufferedDecompress(src)
+		}
+		return &decompressStream{src: src, size: size, newDec: func(r io.Reader) (io.ReadCloser, error) {
+			d, err := zstd.NewReader(r)
+			if err != nil {
+				return nil, err
+			}
+			return zstdReadCloser{d}, nil
+		}}, size, nil
+	case n >= 2 && magic[0] == 0x1F && magic[1] == 0x8B:
+		size, ok := gzipISize(src)
+		if !ok || size > maxCompressedSize {
+			return c.bufferedDecompress(src)
+		}
+		return &decompressStream{src: src, size: size, newDec: func(r io.Reader) (io.ReadCloser, error) {
+			return gzip.NewReader(r)
+		}}, size, nil
+	default:
+		// Not a compressed blob (e.g. written while compression was disabled) — the
+		// inner reader already streams the plaintext.
+		return src, storedSize, nil
+	}
+}
+
+// bufferedDecompress is the fallback path: read the whole blob, decompress in memory,
+// serve from a bytes reader. Used when the source is not seekable or the decompressed
+// size cannot be read from the header.
+func (c *CompressedEngine) bufferedDecompress(src ReadSeekCloser) (ReadSeekCloser, int64, error) {
+	defer src.Close()
+	compressed, err := io.ReadAll(io.LimitReader(src, maxCompressedSize+1))
 	if err != nil {
 		return nil, 0, fmt.Errorf("read compressed data: %w", err)
 	}
-
 	plaintext, err := decompressBlock(compressed)
 	if err != nil {
 		return nil, 0, fmt.Errorf("decompress: %w", err)
@@ -177,8 +224,105 @@ func (c *CompressedEngine) getAndDecompress(getFn func() (ReadSeekCloser, int64,
 	if int64(len(plaintext)) > maxCompressedSize {
 		return nil, 0, fmt.Errorf("decompressed data exceeds size limit")
 	}
-
 	return &bytesReadSeekCloser{Reader: bytes.NewReader(plaintext)}, int64(len(plaintext)), nil
+}
+
+// zstdContentSize reads the frame content size from a zstd frame header without
+// decompressing, then rewinds src to the start. EncodeAll (used on write) always
+// records it. Returns false if the header lacks it.
+func zstdContentSize(src ReadSeekCloser) (int64, bool) {
+	buf := make([]byte, zstd.HeaderMaxSize)
+	n, _ := io.ReadFull(src, buf)
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return 0, false
+	}
+	var h zstd.Header
+	if err := h.Decode(buf[:n]); err != nil || !h.HasFCS {
+		return 0, false
+	}
+	return int64(h.FrameContentSize), true
+}
+
+// gzipISize reads the uncompressed size from the gzip trailer (ISIZE, the last 4
+// bytes, little-endian), then rewinds src. ISIZE is the size modulo 2^32, which is
+// exact here because objects are capped at maxCompressedSize (1 GiB).
+func gzipISize(src ReadSeekCloser) (int64, bool) {
+	if _, err := src.Seek(-4, io.SeekEnd); err != nil {
+		return 0, false
+	}
+	var tail [4]byte
+	if _, err := io.ReadFull(src, tail[:]); err != nil {
+		src.Seek(0, io.SeekStart)
+		return 0, false
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return 0, false
+	}
+	return int64(binary.LittleEndian.Uint32(tail[:])), true
+}
+
+// zstdReadCloser adapts *zstd.Decoder (whose Close returns nothing) to io.ReadCloser.
+type zstdReadCloser struct{ *zstd.Decoder }
+
+func (z zstdReadCloser) Close() error { z.Decoder.Close(); return nil }
+
+// decompressStream streams decompression so GET time-to-first-byte is independent of
+// object size (issue #38). Read pulls from a streaming decoder over the compressed
+// source. Seek (Range/partNumber only) materializes once, since the codecs are not
+// seekable.
+type decompressStream struct {
+	src    ReadSeekCloser
+	newDec func(io.Reader) (io.ReadCloser, error)
+	dec    io.ReadCloser
+	buf    *bytes.Reader
+	size   int64
+}
+
+func (d *decompressStream) Read(p []byte) (int, error) {
+	if d.buf != nil {
+		return d.buf.Read(p)
+	}
+	if d.dec == nil {
+		if _, err := d.src.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+		dec, err := d.newDec(d.src)
+		if err != nil {
+			return 0, err
+		}
+		d.dec = dec
+	}
+	return d.dec.Read(p)
+}
+
+func (d *decompressStream) Seek(offset int64, whence int) (int64, error) {
+	if d.buf == nil {
+		if d.dec != nil {
+			d.dec.Close()
+			d.dec = nil
+		}
+		if _, err := d.src.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+		dec, err := d.newDec(d.src)
+		if err != nil {
+			return 0, err
+		}
+		data, err := io.ReadAll(io.LimitReader(dec, maxCompressedSize+1))
+		dec.Close()
+		if err != nil {
+			return 0, err
+		}
+		d.buf = bytes.NewReader(data)
+	}
+	return d.buf.Seek(offset, whence)
+}
+
+func (d *decompressStream) Close() error {
+	if d.dec != nil {
+		d.dec.Close()
+	}
+	return d.src.Close()
 }
 
 // decompressBlock decompresses a stored object, detecting the codec by magic

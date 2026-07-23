@@ -6,6 +6,21 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.36] - 2026-07-24
+### Fixed
+- **Compressed reads now stream, so GET time-to-first-byte no longer scales with
+  object size** (issue #38). With compression enabled, `CompressedEngine` read the
+  entire object into memory and decompressed it before emitting the first byte, so
+  TTFB grew with object size (~4 ms/MiB on slower disks, e.g. ~330 ms for 64 MiB)
+  even though pod-to-pod latency was sub-millisecond. Reads now wrap the stored blob
+  in a streaming zstd/gzip decoder and report `Content-Length` from the size recorded
+  in the container (zstd frame header, gzip trailing ISIZE) without materializing the
+  object. Measured TTFB is now flat (~8 ms) from 1 MiB to 64 MiB. `Range`/`partNumber`
+  reads (which seek) still buffer on demand, and blobs stored while compression was
+  off stream through untouched. Note: whole-object encryption (SSE-S3/SSE-KMS/
+  per-bucket) still buffers on read to verify the GCM tag before releasing plaintext;
+  streaming that needs a chunked-cipher format and is tracked separately.
+
 ## [4.4.35] - 2026-07-22
 ### Fixed
 - **Cluster read-after-write miss root-caused and fixed: bucket listings are now
@@ -985,7 +1000,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...HEAD
+[4.4.36]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...v4.4.36
 [4.4.35]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...v4.4.35
 [4.4.34]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.33...v4.4.34
 [4.4.33]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.32...v4.4.33
