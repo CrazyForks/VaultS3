@@ -146,24 +146,49 @@ func (e *Engine) GetObject(bucket, key string) (storage.ReadSeekCloser, int64, e
 }
 
 func (e *Engine) getErasureCoded(bucket, key string) (storage.ReadSeekCloser, int64, error) {
-	// Read metadata
-	mKey := metaKey(key)
-	metaReader, _, err := e.backendFor(0).GetObject(bucket, mKey)
+	meta, err := e.readShardMeta(bucket, key)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read shard meta: %w", err)
+		return nil, 0, err
+	}
+
+	// Fast path: while every data shard is intact the object is simply their
+	// concatenation, so stream them instead of reading and reassembling the whole
+	// object before the first byte. This keeps GET time-to-first-byte flat rather
+	// than proportional to object size (issue #38).
+	if st, ok := e.newShardStream(bucket, key, meta); ok {
+		return st, meta.OriginalSize, nil
+	}
+
+	// Degraded: a data shard is missing, so parity recovery is required.
+	data, err := e.reconstruct(bucket, key, meta)
+	if err != nil {
+		return nil, 0, err
+	}
+	return newBytesReadSeekCloser(data), meta.OriginalSize, nil
+}
+
+// readShardMeta loads and parses an erasure-coded object's shard metadata.
+func (e *Engine) readShardMeta(bucket, key string) (*ShardMeta, error) {
+	metaReader, _, err := e.backendFor(0).GetObject(bucket, metaKey(key))
+	if err != nil {
+		return nil, fmt.Errorf("read shard meta: %w", err)
 	}
 	metaBytes, err := io.ReadAll(metaReader)
 	metaReader.Close()
 	if err != nil {
-		return nil, 0, fmt.Errorf("read shard meta data: %w", err)
+		return nil, fmt.Errorf("read shard meta data: %w", err)
 	}
-
 	meta, err := UnmarshalShardMeta(metaBytes)
 	if err != nil {
-		return nil, 0, fmt.Errorf("parse shard meta: %w", err)
+		return nil, fmt.Errorf("parse shard meta: %w", err)
 	}
+	return meta, nil
+}
 
-	// Read all shards (nil for missing ones)
+// reconstruct reads every available shard and rebuilds the original object with
+// Reed-Solomon parity recovery. This is the degraded path: correct but it must read
+// the whole object (and verify it) before returning any bytes.
+func (e *Engine) reconstruct(bucket, key string, meta *ShardMeta) ([]byte, error) {
 	totalShards := meta.DataShards + meta.ParityShards
 	shards := make([][]byte, totalShards)
 	missingCount := 0
@@ -189,7 +214,7 @@ func (e *Engine) getErasureCoded(bucket, key string) (storage.ReadSeekCloser, in
 	}
 
 	if missingCount > meta.ParityShards {
-		return nil, 0, fmt.Errorf("too many missing shards: %d missing, %d parity available", missingCount, meta.ParityShards)
+		return nil, fmt.Errorf("too many missing shards: %d missing, %d parity available", missingCount, meta.ParityShards)
 	}
 
 	if missingCount > 0 {
@@ -199,19 +224,16 @@ func (e *Engine) getErasureCoded(bucket, key string) (storage.ReadSeekCloser, in
 		)
 	}
 
-	// Reconstruct original data
-	// Need encoder with matching config
 	encoder, err := NewEncoder(meta.DataShards, meta.ParityShards)
 	if err != nil {
-		return nil, 0, fmt.Errorf("create decoder: %w", err)
+		return nil, fmt.Errorf("create decoder: %w", err)
 	}
 
 	data, err := encoder.Decode(shards, meta.OriginalSize)
 	if err != nil {
-		return nil, 0, fmt.Errorf("erasure decode: %w", err)
+		return nil, fmt.Errorf("erasure decode: %w", err)
 	}
-
-	return newBytesReadSeekCloser(data), meta.OriginalSize, nil
+	return data, nil
 }
 
 func (e *Engine) DeleteObject(bucket, key string) error {

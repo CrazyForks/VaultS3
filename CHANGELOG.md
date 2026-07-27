@@ -6,6 +6,29 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.38] - 2026-07-27
+### Fixed
+- **Erasure-coded reads now stream, so GET time-to-first-byte no longer scales with
+  object size** (issue #38, the remaining half). With erasure coding enabled, every
+  read called `io.ReadAll` on *all* shards, ran Reed-Solomon reconstruction, and only
+  then returned a reader over the finished buffer, so the whole object had to be read
+  and reassembled before the first byte went out and TTFB grew with size (~3 ms/MiB on
+  a slower disk, ~200 ms for 64 MiB). Because the code is systematic Reed-Solomon, an
+  intact object is exactly the concatenation of its data shards, so reads now stream
+  those shards in order and skip parity math entirely on the healthy path. Measured in
+  a 3-node cluster with erasure coding (4+2) and incompressible data, TTFB went from
+  8.2/20.8/39.6 ms at 8/32/64 MiB (scaling, ~0.56 ms/MiB) to a flat ~2.5 ms at every
+  size, and full-object throughput improved from 258 to 309 MiB/s. Correctness is
+  unchanged: if a data shard is missing or unreadable the read transparently falls back
+  to full parity reconstruction, including mid-stream, and `Range`/`partNumber` reads
+  seek directly to the right shard instead of materializing the object. Objects written
+  by earlier versions read back byte-identical (the on-disk format did not change).
+  Note that cross-shard parity verification no longer runs on every healthy read (it
+  would require reading every shard, which is the cost being removed); the background
+  healer remains responsible for detecting and repairing degraded objects.
+  Whole-object encryption (SSE-S3/SSE-KMS/per-bucket) still buffers on read to verify
+  the GCM tag before releasing plaintext, which is tracked separately.
+
 ## [4.4.37] - 2026-07-27
 ### Fixed
 - **"Remember me" now pre-fills your credentials on the next login** (issue #40). The
@@ -1026,7 +1049,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...HEAD
+[4.4.38]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...v4.4.38
 [4.4.37]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...v4.4.37
 [4.4.36]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...v4.4.36
 [4.4.35]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...v4.4.35
