@@ -4,12 +4,14 @@ import { DASHBOARD_BASE } from '../basePath'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import { getOIDCConfig, type OIDCConfigResponse } from '../api/auth'
+import { getRememberedAccessKey, setRememberedAccessKey } from '../api/client'
 
 export default function LoginPage() {
-  const [accessKey, setAccessKey] = useState('')
+  const remembered = getRememberedAccessKey()
+  const [accessKey, setAccessKey] = useState(remembered)
   const [secretKey, setSecretKey] = useState('')
   const [showSecretKey, setShowSecretKey] = useState(false)
-  const [rememberMe, setRememberMe] = useState(false)
+  const [rememberMe, setRememberMe] = useState(!!remembered)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [oidcConfig, setOidcConfig] = useState<OIDCConfigResponse | null>(null)
@@ -46,6 +48,9 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(accessKey, secretKey, rememberMe)
+      // Persist the access key (not the secret) so it pre-fills next time, or clear
+      // it if the box is unchecked. This is what "Remember me" means to most users.
+      setRememberedAccessKey(rememberMe ? accessKey : '')
       navigate('/buckets', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')

@@ -1025,6 +1025,8 @@ vaults3-cli object get my-bucket docs/readme.md ./downloaded.md
 vaults3-cli object cp my-bucket/file.txt my-bucket/copy.txt
 vaults3-cli object rm my-bucket docs/readme.md
 vaults3-cli object presign my-bucket file.txt --expires=3600
+vaults3-cli object verify my-bucket                   # find objects that list but cannot be read (metadata/data desync)
+vaults3-cli object verify my-bucket --repair          # remove orphaned metadata for unreadable objects
 
 # IAM user operations
 vaults3-cli user list

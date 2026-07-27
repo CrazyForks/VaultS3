@@ -553,6 +553,13 @@ func (h *ObjectHandler) GetObject(w http.ResponseWriter, r *http.Request, bucket
 			reader, size, err = h.engine.GetObject(bucket, key)
 		}
 		if err != nil {
+			// Metadata says the object exists (so it appears in listings) but the
+			// engine cannot read its data. This desync is exactly what makes an object
+			// "listed but not downloadable" over S3 while it looks present (issue #40).
+			// Log it loudly so operators can find and reconcile it with
+			// `vaults3-cli object verify [--repair]`.
+			slog.Warn("object metadata/data desync: metadata present but data is unreadable, object lists but cannot be served over S3",
+				"bucket", bucket, "key", key, "error", err)
 			traceRead404(r, "GET", bucket, key, "data_missing")
 			writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
 			return

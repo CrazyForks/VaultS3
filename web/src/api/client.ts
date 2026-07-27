@@ -2,9 +2,29 @@ import { API_BASE, DASHBOARD_BASE } from '../basePath'
 
 const BASE = API_BASE
 const TOKEN_KEY = 'vaults3_token'
+const REMEMBER_KEY = 'vaults3_remember_access_key'
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY)
+}
+
+// Remembered credential: only the access key is persisted (never the secret), so
+// "Remember me" pre-fills the login form on the next visit. Storing the secret in
+// the browser would be a needless exposure for a self-hosted admin console.
+export function getRememberedAccessKey(): string {
+  return localStorage.getItem(REMEMBER_KEY) || ''
+}
+
+export function setRememberedAccessKey(accessKey: string): void {
+  if (accessKey) {
+    localStorage.setItem(REMEMBER_KEY, accessKey)
+  } else {
+    localStorage.removeItem(REMEMBER_KEY)
+  }
+}
+
+export function clearRememberedAccessKey(): void {
+  localStorage.removeItem(REMEMBER_KEY)
 }
 
 export function setToken(token: string, remember: boolean): void {

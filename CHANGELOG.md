@@ -6,6 +6,32 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.37] - 2026-07-27
+### Fixed
+- **"Remember me" now pre-fills your credentials on the next login** (issue #40). The
+  checkbox already persisted the session token (so you stayed signed in), but the
+  login form always started blank, so it did not "remember credentials" the way most
+  users expect. When checked, the dashboard now stores the access key (never the
+  secret) and pre-fills it, with the box pre-checked, on the next visit.
+
+### Added
+- **`vaults3-cli object verify <bucket> [--prefix=<p>] [--repair]`** to find and fix a
+  metadata/data desync (issue #40). If an object's metadata exists but its data is
+  missing, the object lists normally but a `GET` returns "Object not found" (it looks
+  present yet cannot be downloaded over S3). `verify` walks the bucket, probes each
+  object with a 1-byte ranged `GET`, and reports the keys whose data is unreadable;
+  `--repair` removes the orphaned metadata so the phantom stops appearing in listings.
+  It never touches readable objects. The S3 `GET` path also now logs a loud `WARN`
+  when it hits this desync, so it is diagnosable in server logs.
+
+### Notes
+- **Folder "Last Modified" over rclone (issue #40, follow-up to #35) is an rclone
+  client limitation, not a server bug.** VaultS3 already returns a `<LastModified>` on
+  `<CommonPrefixes>` (the #35 extension) and the web UI shows real folder dates, but
+  rclone does not read directory timestamps from S3 listings at all, so `rclone lsd`
+  shows folders with its own default date (e.g. 2000-01-01) regardless. There is
+  nothing to change server-side.
+
 ## [4.4.36] - 2026-07-24
 ### Fixed
 - **Compressed reads now stream, so GET time-to-first-byte no longer scales with
@@ -1000,7 +1026,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...HEAD
+[4.4.37]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...v4.4.37
 [4.4.36]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...v4.4.36
 [4.4.35]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.34...v4.4.35
 [4.4.34]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.33...v4.4.34

@@ -25,7 +25,8 @@ Subcommands:
   get <bucket> <key> <file>                           Download object
   rm <bucket> <key>                                   Delete object
   cp <src-bucket/key> <dst-bucket/key>                Copy object
-  presign <bucket> <key> [--expires=3600]             Generate presigned GET URL`)
+  presign <bucket> <key> [--expires=3600]             Generate presigned GET URL
+  verify <bucket> [--prefix=<p>] [--repair]           Find objects that list but cannot be read (metadata/data desync); --repair removes the orphaned metadata`)
 		os.Exit(1)
 	}
 
@@ -44,6 +45,8 @@ Subcommands:
 		objectCopy(args[1:])
 	case "presign":
 		objectPresign(args[1:])
+	case "verify", "fsck":
+		objectVerify(args[1:])
 	default:
 		fatal("unknown object subcommand: " + args[0])
 	}
@@ -361,6 +364,164 @@ func objectPresign(args []string) {
 	params.Set("X-Amz-Signature", signature)
 
 	fmt.Printf("%s%s?%s\n", endpoint, canonicalURI, params.Encode())
+}
+
+// objectVerify walks every object in a bucket and probes whether its data is
+// actually readable. It catches the metadata/data desync where an object lists
+// fine (its metadata exists) but a GET returns "Object not found" because the
+// underlying data is missing (issue #40). With --repair it removes the orphaned
+// metadata so the phantom stops appearing in listings. It never deletes readable
+// data: repair only touches keys that already fail to read.
+func objectVerify(args []string) {
+	if len(args) < 1 {
+		fatal("object verify requires a bucket name")
+	}
+	bucket := args[0]
+	prefix := ""
+	repair := false
+	for _, arg := range args[1:] {
+		switch {
+		case strings.HasPrefix(arg, "--prefix="):
+			prefix = strings.TrimPrefix(arg, "--prefix=")
+		case arg == "--repair":
+			repair = true
+		}
+	}
+
+	keys := listAllObjectKeys(bucket, prefix)
+	fmt.Printf("Verifying %d object(s) in bucket %q...\n", len(keys), bucket)
+
+	var orphans []string
+	for _, key := range keys {
+		// Directory markers (keys ending in "/") have no readable body by design;
+		// skip them so they are not reported as orphans.
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
+		status, err := probeObjectReadable(bucket, key)
+		if err != nil {
+			fatal(err.Error())
+		}
+		// 404 means metadata exists (it is in the listing) but the data cannot be
+		// read: a genuine desync. Any other status (200/206/416 for zero-byte) is fine.
+		if status == http.StatusNotFound {
+			orphans = append(orphans, key)
+		}
+	}
+
+	if len(orphans) == 0 {
+		fmt.Println("OK: every listed object is readable, no metadata/data desync found.")
+		return
+	}
+
+	fmt.Printf("\nFound %d object(s) that list but cannot be read (data missing):\n", len(orphans))
+	for _, key := range orphans {
+		fmt.Printf("  %s\n", key)
+	}
+
+	if !repair {
+		fmt.Println("\nRe-run with --repair to remove the orphaned metadata for these keys.")
+		return
+	}
+
+	fmt.Println("\nRepairing (removing orphaned metadata)...")
+	repaired := 0
+	for _, key := range orphans {
+		u := objectURL(bucket, key)
+		req, err := http.NewRequest("DELETE", u, nil)
+		if err != nil {
+			fmt.Printf("  FAILED %s: %v\n", key, err)
+			continue
+		}
+		signV4(req, accessKey, secretKey, region)
+		resp, err := httpClient().Do(req)
+		if err != nil {
+			fmt.Printf("  FAILED %s: %v\n", key, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 204 || resp.StatusCode == 200 {
+			fmt.Printf("  removed %s\n", key)
+			repaired++
+		} else {
+			fmt.Printf("  FAILED %s: HTTP %d\n", key, resp.StatusCode)
+		}
+	}
+	fmt.Printf("\nRepaired %d of %d orphan(s).\n", repaired, len(orphans))
+}
+
+// listAllObjectKeys returns every object key in a bucket (recursive, no delimiter),
+// paginating past the server's per-page cap.
+func listAllObjectKeys(bucket, prefix string) []string {
+	var keys []string
+	token := ""
+	for {
+		path := fmt.Sprintf("/%s?list-type=2&max-keys=1000", bucket)
+		if prefix != "" {
+			path += "&prefix=" + url.QueryEscape(prefix)
+		}
+		if token != "" {
+			path += "&continuation-token=" + url.QueryEscape(token)
+		}
+		resp, err := s3Request("GET", path, nil)
+		if err != nil {
+			fatal(err.Error())
+		}
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)))
+		}
+		var result struct {
+			XMLName  xml.Name `xml:"ListBucketResult"`
+			Contents []struct {
+				Key string `xml:"Key"`
+			} `xml:"Contents"`
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+		}
+		if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			fatal("parse response: " + err.Error())
+		}
+		resp.Body.Close()
+		for _, c := range result.Contents {
+			keys = append(keys, c.Key)
+		}
+		if !result.IsTruncated || result.NextContinuationToken == "" {
+			break
+		}
+		token = result.NextContinuationToken
+	}
+	return keys
+}
+
+// probeObjectReadable issues a 1-byte ranged GET so a healthy object is not fully
+// downloaded, and returns the HTTP status. A 404 means the data is unreadable.
+func probeObjectReadable(bucket, key string) (int, error) {
+	req, err := http.NewRequest("GET", objectURL(bucket, key), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	signV4(req, accessKey, secretKey, region)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return 0, err
+	}
+	resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// objectURL builds a properly path-encoded S3 URL for a bucket/key, so keys with
+// spaces or other special characters sign and route correctly.
+func objectURL(bucket, key string) string {
+	u, err := url.Parse(strings.TrimRight(endpoint, "/"))
+	if err != nil {
+		return strings.TrimRight(endpoint, "/") + "/" + bucket + "/" + key
+	}
+	u.Path = "/" + bucket + "/" + key
+	return u.String()
 }
 
 func newHTTPRequest(method, url string, body io.Reader) (*http.Request, error) {
