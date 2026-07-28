@@ -1406,7 +1406,7 @@ VaultS3 is designed with security in mind:
 - **Content-MD5 validation**: Server-side integrity verification on PUT rejects corrupted uploads
 - **S3 Checksum API**: CRC32, CRC32C, SHA1, SHA256 checksums verified on upload and returned on download
 - **Conditional request handling**: `If-Match`/`If-None-Match` ETag checks prevent lost updates (412 Precondition Failed)
-- **Dependency hygiene**: Dashboard dependencies kept current against Dependabot advisories (latest: `react-router` 7.17.0 closing 6 alerts, turbo-stream RCE, RSC/Location XSS, `__manifest`/single-fetch DoS, protocol-relative open redirect)
+- **Dependency hygiene**: Dashboard dependencies kept current against Dependabot advisories (latest: `react-router` 7.18.1 and `postcss` 8.5.24, closing a backslash open redirect in `<Link>`/`useNavigate`, an unauthenticated route-matching DoS, an SSR hydration constructor injection, an RSCErrorHandler XSS, and a postcss path traversal; earlier: `react-router` 7.17.0 closing 6 alerts, turbo-stream RCE, RSC/Location XSS, `__manifest`/single-fetch DoS, protocol-relative open redirect). The one advisory left open is a **React Server Components CSRF bypass** that is only patched in `react-router` 8.x: the dashboard is a client-rendered SPA and never uses RSC mode, so it is not affected, and 8.x would additionally require Node 22.22+ and dropping `react-router-dom`
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting policy and deployment best practices.
 

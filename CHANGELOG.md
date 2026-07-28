@@ -6,6 +6,22 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.40] - 2026-07-28
+### Security
+- **Dashboard dependencies updated: `react-router`/`react-router-dom` 7.17.0 → 7.18.1
+  and `postcss` 8.5.15 → 8.5.24.** This clears four react-router advisories, two of
+  which affect the dashboard as it is actually built: an **open redirect via a
+  backslash in `<Link>`/`useNavigate`** (GHSA-wrjc-x8rr-h8h6, a CVE-2025-68470 bypass)
+  and an **unauthenticated denial of service via inefficient route matching**
+  (GHSA-chx6-hx7r-mcp5). It also clears two that do not apply here (an SSR hydration
+  issue and the RSCErrorHandler XSS), plus a postcss path-traversal advisory in the
+  build toolchain (GHSA-r28c-9q8g-f849). One advisory remains open by design: the
+  **RSC Mode CSRF bypass** (GHSA-qwww-vcr4-c8h2) is only patched in react-router 8.x
+  and only affects React Server Components mode, which the dashboard does not use (it
+  is a client-rendered SPA). Moving to 8.x would also require Node 22.22+ and dropping
+  `react-router-dom`, so it is deferred to a deliberate upgrade rather than bundled
+  into a patch release.
+
 ## [4.4.39] - 2026-07-28
 ### Fixed
 - **Bucket policies using the standard AWS `Principal` object form now grant public
@@ -1079,7 +1095,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...HEAD
+[4.4.40]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...v4.4.40
 [4.4.39]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...v4.4.39
 [4.4.38]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...v4.4.38
 [4.4.37]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...v4.4.37
