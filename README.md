@@ -89,7 +89,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **AES-256-GCM encryption at rest**: SSE-S3 (static key) and SSE-KMS (HashiCorp Vault or local key provider) encryption modes
 - **Per-bucket encryption keys**: For bucket-per-tenant setups, each bucket can be encrypted with its own key that is **not shared** with other tenants (or opt out and stay plaintext). Envelope encryption (master KEK wraps a per-bucket data key). Opt in per bucket via `PUT /{bucket}?encryption` or the dashboard. Supports key rotation and crypto-shredding. Enable with `encryption.per_bucket: true`, see [design doc](docs/design/per-bucket-encryption.md)
 - **SSE-C (customer-provided keys)**: Operator-blind per-object encryption: the client supplies the key per request (`x-amz-server-side-encryption-customer-*`). The server encrypts/decrypts with it and stores only the key's MD5, never the key
-- **Bucket policies**: Public-read, private, custom S3-compatible JSON policies
+- **Bucket policies**: Public-read, private, custom S3-compatible JSON policies. Supports the standard AWS `Principal` forms (`"*"`, `{"AWS": "*"}`, `{"AWS": ["*"]}`), wildcard actions, explicit `Deny` precedence, and per-bucket `Resource` matching. Granting `s3:GetObject` to everyone makes objects publicly readable and `s3:ListBucket` makes the listing public, as separate permissions; bucket sub-resources (`?policy`, `?acl`, ...) always require authentication. **Public Access Block** (`BlockPublicPolicy` / `RestrictPublicBuckets`) overrides any policy and blocks anonymous access
 - **Quota management**: Per-bucket size and object count limits
 - **Rate limiting**: Token bucket rate limiter per client IP and per access key to prevent abuse
 - **S3 Select**: Execute SQL queries on CSV, JSON, and Parquet objects without downloading the full file
@@ -163,7 +163,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **RAM optimization**: Slim search index with LRU eviction cap (50K entries default), batched last-access updates (30s flush interval), configurable Go memory limit (`GOMEMLIMIT`)
 - **GetObjectAttributes**: Returns object size, ETag, and storage class. Used internally by AWS SDK v2
 - **Bucket encryption config**: Per-bucket server-side encryption configuration (AES256, aws:kms) via `PUT/GET/DELETE /{bucket}?encryption`
-- **Public access block**: Per-bucket public access block with 4 boolean flags (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets)
+- **Public access block**: Per-bucket public access block with 4 boolean flags (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets). `BlockPublicPolicy` and `RestrictPublicBuckets` are enforced: either one blocks anonymous access to the bucket regardless of its policy. The two ACL flags are accepted and stored for API compatibility but have no effect, since VaultS3 uses policies rather than ACLs (`PUT ?acl` is a no-op)
 - **Bucket logging config**: Per-bucket access logging configuration with target bucket and prefix
 - **User metadata**: Custom `x-amz-meta-*` headers on PUT/GET/HEAD
 - **Conditional requests**: `If-Modified-Since`, `If-None-Match` (304), `If-Match`, `If-None-Match` (412) on GET and PUT

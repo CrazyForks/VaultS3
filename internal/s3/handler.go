@@ -274,6 +274,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if key != "" && h.store.IsBucketPublicRead(bucket) {
 			authRequired = false
 		}
+		// A policy granting s3:ListBucket to everyone makes the object listing
+		// itself public. This is only ever the plain listing: every bucket
+		// sub-resource (?policy, ?acl, ...) still requires authentication, so a
+		// public bucket never leaks its own configuration.
+		if key == "" && isPlainBucketListing(r) && h.store.IsBucketPublicList(bucket) {
+			authRequired = false
+		}
 		if h.store.IsBucketWebsite(bucket) {
 			authRequired = false
 		}
@@ -844,6 +851,30 @@ func (h *Handler) parseRequest(host, path string) (bucket, key string) {
 
 	// Fall back to path-style
 	return parsePath(path)
+}
+
+// bucketSubresources are the query parameters that turn a bucket-level request
+// into a configuration operation rather than an object listing. They are listed
+// explicitly so anonymous access can be allowed for the listing alone: a new
+// sub-resource added to the router without being added here stays authenticated,
+// which is the safe direction to fail.
+var bucketSubresources = []string{
+	"acl", "cors", "delete", "encryption", "lambda", "lifecycle", "location",
+	"logging", "notification", "object-lock", "policy", "publicAccessBlock",
+	"quota", "replication", "tagging", "uploads", "versioning", "versions",
+	"website",
+}
+
+// isPlainBucketListing reports whether a bucket-level GET is an ordinary object
+// listing (ListObjects v1/v2) and not a sub-resource read.
+func isPlainBucketListing(r *http.Request) bool {
+	q := r.URL.Query()
+	for _, sub := range bucketSubresources {
+		if _, ok := q[sub]; ok {
+			return false
+		}
+	}
+	return true
 }
 
 func parsePath(path string) (bucket, key string) {

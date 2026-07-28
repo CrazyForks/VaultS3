@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Kodiqa-Solutions/VaultS3/internal/iam"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -483,45 +484,174 @@ func (s *Store) DeleteBucketPolicy(bucket string) error {
 	})
 }
 
-// IsBucketPublicRead checks if a bucket policy allows public read access.
+// IsBucketPublicRead reports whether the bucket policy lets an anonymous caller
+// read objects (s3:GetObject).
 func (s *Store) IsBucketPublicRead(bucket string) bool {
+	return s.policyAllowsAnonymous(bucket, "s3:GetObject")
+}
+
+// IsBucketPublicList reports whether the bucket policy lets an anonymous caller
+// list the bucket's contents (s3:ListBucket). This is deliberately separate from
+// IsBucketPublicRead: listing a bucket and reading its objects are different
+// permissions in S3, and a policy that grants only one must not imply the other.
+func (s *Store) IsBucketPublicList(bucket string) bool {
+	return s.policyAllowsAnonymous(bucket, "s3:ListBucket")
+}
+
+// policyAllowsAnonymous evaluates the bucket policy for an unsigned (anonymous)
+// request. It implements the parts of AWS policy evaluation that decide public
+// access: an explicit Deny always wins, the principal must be the wildcard "*"
+// (in any of the spellings AWS accepts), the action must match, and the resource
+// must refer to this bucket. Public Access Block, if configured, overrides the
+// policy and blocks anonymous access outright.
+func (s *Store) policyAllowsAnonymous(bucket, action string) bool {
+	// A bucket with Public Access Block enabled is never anonymously accessible,
+	// regardless of what its policy says — that is the point of the setting, which
+	// was previously stored and reported but never actually enforced.
+	if pab, err := s.GetPublicAccessBlock(bucket); err == nil && pab != nil {
+		if pab.BlockPublicPolicy || pab.RestrictPublicBuckets {
+			return false
+		}
+	}
+
 	policyJSON, err := s.GetBucketPolicy(bucket)
 	if err != nil {
 		return false
 	}
-	// Check for public-read pattern in policy
 	var policy struct {
 		Statement []struct {
 			Effect    string      `json:"Effect"`
 			Principal interface{} `json:"Principal"`
 			Action    interface{} `json:"Action"`
+			Resource  interface{} `json:"Resource"`
 		} `json:"Statement"`
 	}
 	if err := json.Unmarshal(policyJSON, &policy); err != nil {
 		return false
 	}
+
+	allowed := false
 	for _, stmt := range policy.Statement {
-		if stmt.Effect != "Allow" {
+		if !isAnonymousPrincipal(stmt.Principal) {
 			continue
 		}
-		// Check Principal == "*"
-		if p, ok := stmt.Principal.(string); ok && p == "*" {
-			// Check Action contains s3:GetObject
-			switch a := stmt.Action.(type) {
-			case string:
-				if a == "s3:GetObject" || a == "s3:*" {
+		if !matchesPolicyAction(stmt.Action, action) {
+			continue
+		}
+		if !policyResourceCoversBucket(stmt.Resource, bucket) {
+			continue
+		}
+		// Explicit Deny wins over any Allow, exactly as in AWS.
+		if strings.EqualFold(stmt.Effect, "Deny") {
+			return false
+		}
+		if strings.EqualFold(stmt.Effect, "Allow") {
+			allowed = true
+		}
+	}
+	return allowed
+}
+
+// isAnonymousPrincipal reports whether a statement's Principal is the "everyone"
+// wildcard. AWS accepts several spellings, all of which must work:
+//
+//	"Principal": "*"
+//	"Principal": {"AWS": "*"}
+//	"Principal": {"AWS": ["*"]}
+//
+// A principal naming a specific account, user, or service is NOT public and must
+// never match here, or a scoped policy would open the bucket to the world.
+func isAnonymousPrincipal(principal interface{}) bool {
+	switch p := principal.(type) {
+	case string:
+		return p == "*"
+	case []interface{}:
+		for _, v := range p {
+			if s, ok := v.(string); ok && s == "*" {
+				return true
+			}
+		}
+	case map[string]interface{}:
+		// Only the "AWS" principal type can be the everyone wildcard. Service and
+		// CanonicalUser principals are never anonymous public access.
+		for key, v := range p {
+			if !strings.EqualFold(key, "AWS") {
+				continue
+			}
+			for _, s := range policyStringList(v) {
+				if s == "*" {
 					return true
-				}
-			case []interface{}:
-				for _, action := range a {
-					if s, ok := action.(string); ok && (s == "s3:GetObject" || s == "s3:*") {
-						return true
-					}
 				}
 			}
 		}
 	}
 	return false
+}
+
+// matchesPolicyAction reports whether the statement's Action covers the wanted
+// action, honouring wildcards such as "s3:*" and "s3:Get*".
+func matchesPolicyAction(actions interface{}, want string) bool {
+	for _, pattern := range policyStringList(actions) {
+		if iam.MatchWildcard(pattern, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// policyResourceCoversBucket reports whether a statement's Resource refers to this
+// bucket. Without this check a policy written for a different bucket would make
+// this one public. A statement with no Resource is treated as covering the bucket,
+// since the policy is stored per bucket.
+func policyResourceCoversBucket(resources interface{}, bucket string) bool {
+	patterns := policyStringList(resources)
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if bucketPatternFromARN(pattern) == "" {
+			continue
+		}
+		if iam.MatchWildcard(bucketPatternFromARN(pattern), bucket) {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketPatternFromARN extracts the bucket portion of an S3 resource ARN, so
+// "arn:aws:s3:::photos/*" yields "photos". A bare "*" covers every bucket.
+func bucketPatternFromARN(pattern string) string {
+	if pattern == "*" {
+		return "*"
+	}
+	const prefix = "arn:aws:s3:::"
+	if !strings.HasPrefix(pattern, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(pattern, prefix)
+	if i := strings.Index(rest, "/"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}
+
+// policyStringList normalises a policy field that may be a single string or a
+// list of strings into a slice.
+func policyStringList(v interface{}) []string {
+	switch t := v.(type) {
+	case string:
+		return []string{t}
+	case []interface{}:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // Bucket quota operations

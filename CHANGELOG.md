@@ -6,6 +6,36 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.39] - 2026-07-28
+### Fixed
+- **Bucket policies using the standard AWS `Principal` object form now grant public
+  read** (issue #41, reported by hllshiro). Public-read detection only recognised the
+  shorthand `"Principal": "*"`, so the AWS-standard `{"AWS": "*"}` and `{"AWS": ["*"]}`
+  forms fell through a string type assertion and anonymous `GET`/`HEAD` returned
+  `403 AccessDenied`. All three spellings are now accepted. A principal naming a
+  specific account, user, or service is still never treated as public.
+- **Bucket policy evaluation now honours explicit `Deny` and the statement `Resource`.**
+  A policy that allowed public read and also explicitly denied it was treated as
+  public, and the `Resource` was ignored entirely, so a statement written for a
+  different bucket could make the current one public. Deny now wins over Allow, and a
+  statement only counts when its `Resource` refers to this bucket. Action matching also
+  supports wildcards (`s3:*`, `s3:Get*`) via the same matcher used for IAM policies.
+- **Public Access Block is now enforced.** `BlockPublicPolicy` and
+  `RestrictPublicBuckets` were stored and returned by the API but never consulted, so
+  turning them on did not actually stop anonymous access. A bucket with either flag set
+  now denies anonymous requests regardless of its policy. Authenticated access is
+  unaffected.
+
+### Added
+- **Anonymous bucket listing when the policy grants `s3:ListBucket` to everyone**
+  (issue #41, follow-up). Previously only object reads could be public. Listing and
+  reading are kept as separate permissions, matching S3: a policy granting only
+  `s3:ListBucket` makes the listing public **without** making objects readable, and a
+  policy granting only `s3:GetObject` does not expose the listing. Bucket
+  sub-resources (`?policy`, `?acl`, `?versioning`, and every other configuration
+  endpoint) always require authentication, so a public bucket never exposes its own
+  configuration.
+
 ## [4.4.38] - 2026-07-27
 ### Fixed
 - **Erasure-coded reads now stream, so GET time-to-first-byte no longer scales with
@@ -1049,7 +1079,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...HEAD
+[4.4.39]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...v4.4.39
 [4.4.38]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...v4.4.38
 [4.4.37]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.36...v4.4.37
 [4.4.36]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.35...v4.4.36

@@ -54,6 +54,11 @@ func matchesAny(patterns []string, value string) bool {
 	return false
 }
 
+// MatchWildcard matches an IAM-style pattern against a value, so bucket-policy
+// evaluation (which lives in the metadata store) uses exactly the same matching
+// rules as identity-policy evaluation instead of a second, subtly different copy.
+func MatchWildcard(pattern, value string) bool { return matchWildcard(pattern, value) }
+
 // matchWildcard matches a pattern against a value.
 // Supports "*" (matches any sequence of characters) and "?" (matches any single character)
 // at any position in the pattern.
