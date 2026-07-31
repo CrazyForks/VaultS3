@@ -82,6 +82,27 @@ type BucketInfo struct {
 	ObjectLockEnabled    bool              `json:"object_lock_enabled,omitempty"` // set at creation; requires versioning
 	Tags                 map[string]string `json:"tags,omitempty"`
 	FIFOQuota            bool              `json:"fifo_quota,omitempty"` // delete oldest objects to make room instead of rejecting
+	// Durability overrides (issue #39). Both are pointers so that "not set" is
+	// distinct from "set to off": an unset bucket follows the server defaults, and
+	// only an explicit choice overrides them.
+	//
+	// ErasureEnabled controls whether new objects are erasure coded, and
+	// ReplicaCount how many cluster nodes hold a copy. Together they decide what a
+	// bucket costs on disk, which lets scratch data be stored once while data that
+	// matters keeps its parity and replicas.
+	ErasureEnabled *bool `json:"erasure_enabled,omitempty"`
+	ReplicaCount   *int  `json:"replica_count,omitempty"`
+}
+
+// Durability describes how a bucket's data is protected, after the bucket's own
+// overrides are applied to the server defaults.
+type Durability struct {
+	ErasureEnabled bool `json:"erasureEnabled"`
+	ReplicaCount   int  `json:"replicaCount"`
+	// Explicit reports whether the bucket overrides the server default, so the API
+	// and dashboard can show "inherited" instead of implying a per-bucket choice.
+	ErasureExplicit bool `json:"erasureExplicit"`
+	ReplicaExplicit bool `json:"replicaExplicit"`
 }
 
 type AccessKey struct {
@@ -675,6 +696,54 @@ func (s *Store) UpdateBucketQuota(name string, maxSizeBytes, maxObjects int64) e
 		}
 		return b.Put([]byte(name), updated)
 	})
+}
+
+// SetBucketDurability records a bucket's erasure-coding and replica-count
+// overrides. A nil value clears that override so the bucket follows the server
+// default again (issue #39).
+//
+// Only future writes are affected. Objects already stored keep the layout they
+// were written with, which is safe because reads detect an object's format from
+// the object itself rather than from this setting.
+func (s *Store) SetBucketDurability(name string, erasure *bool, replicas *int) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketsBucket)
+		data := b.Get([]byte(name))
+		if data == nil {
+			return fmt.Errorf("bucket not found: %s", name)
+		}
+		var info BucketInfo
+		if err := json.Unmarshal(data, &info); err != nil {
+			return err
+		}
+		info.ErasureEnabled = erasure
+		info.ReplicaCount = replicas
+		updated, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(name), updated)
+	})
+}
+
+// BucketDurability resolves a bucket's protection settings against the server
+// defaults. An unknown bucket simply gets the defaults, so callers on the write
+// path never have to special-case a missing bucket.
+func (s *Store) BucketDurability(name string, defaultErasure bool, defaultReplicas int) Durability {
+	d := Durability{ErasureEnabled: defaultErasure, ReplicaCount: defaultReplicas}
+	info, err := s.GetBucket(name)
+	if err != nil || info == nil {
+		return d
+	}
+	if info.ErasureEnabled != nil {
+		d.ErasureEnabled = *info.ErasureEnabled
+		d.ErasureExplicit = true
+	}
+	if info.ReplicaCount != nil && *info.ReplicaCount > 0 {
+		d.ReplicaCount = *info.ReplicaCount
+		d.ReplicaExplicit = true
+	}
+	return d
 }
 
 // Access key operations

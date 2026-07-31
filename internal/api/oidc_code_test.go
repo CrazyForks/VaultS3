@@ -20,18 +20,24 @@ import (
 // real one does: it advertises the flow, enforces PKCE, echoes the nonce into the
 // ID token, requires the client credential, and burns each code after one use.
 type codeFlowIdP struct {
+	idpOptions
+
 	srv    *httptest.Server
 	key    *rsa.PrivateKey
 	issuer string
 
-	clientID     string
-	clientSecret string
-
 	mu       sync.Mutex
 	pending  map[string]pendingAuth // code → what the authorize request asked for
 	redeemed map[string]bool
+}
 
-	// knobs
+// idpOptions is how a test asks for a particular provider shape. It is kept
+// separate from codeFlowIdP so the options can be passed by value while the
+// provider itself, which carries a mutex, is only ever handled by pointer.
+type idpOptions struct {
+	clientID     string
+	clientSecret string
+
 	noCodeSupport bool
 	noPKCE        bool
 }
@@ -42,16 +48,18 @@ type pendingAuth struct {
 	redirectURI string
 }
 
-func newCodeFlowIdP(t *testing.T, cfg codeFlowIdP) *codeFlowIdP {
+func newCodeFlowIdP(t *testing.T, opts idpOptions) *codeFlowIdP {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	idp := &cfg
-	idp.key = key
-	idp.pending = map[string]pendingAuth{}
-	idp.redeemed = map[string]bool{}
+	idp := &codeFlowIdP{
+		idpOptions: opts,
+		key:        key,
+		pending:    map[string]pendingAuth{},
+		redeemed:   map[string]bool{},
+	}
 	if idp.clientID == "" {
 		idp.clientID = "vaults3"
 	}
@@ -225,7 +233,7 @@ func followAuthorize(t *testing.T, authorizeURL string) (code, state string) {
 // that enforces PKCE and a client secret, which is how Authentik and Keycloak are
 // configured out of the box.
 func TestCodeFlowEndToEnd(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{clientSecret: "s3cret"})
+	idp := newCodeFlowIdP(t, idpOptions{clientSecret: "s3cret"})
 	v := newCodeValidator(t, idp)
 
 	if !v.SupportsCodeFlow() {
@@ -264,7 +272,7 @@ func TestCodeFlowEndToEnd(t *testing.T) {
 // TestCodeFlowRejectsTamperedState is the CSRF guard: the state is sealed, so a
 // state the server did not mint cannot be used to complete a login.
 func TestCodeFlowRejectsTamperedState(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	v := newCodeValidator(t, idp)
 
 	authURL, err := v.StartLogin("https://s3.example.com/dashboard/oidc-callback")
@@ -287,7 +295,7 @@ func TestCodeFlowRejectsTamperedState(t *testing.T) {
 // TestCodeFlowRejectsStateFromAnotherServer proves the seal is keyed: a state
 // minted by a different deployment cannot complete a login here.
 func TestCodeFlowRejectsStateFromAnotherServer(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	v := newCodeValidator(t, idp)
 
 	other, err := NewOIDCValidator(idp.configuredIssuer(), idp.clientID, nil, 3600)
@@ -310,7 +318,7 @@ func TestCodeFlowRejectsStateFromAnotherServer(t *testing.T) {
 // sharing the admin secret must be able to finish each other's logins, which is
 // what happens behind a load balancer.
 func TestCodeFlowStateSurvivesAcrossNodes(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	nodeA := newCodeValidator(t, idp)
 	nodeB := newCodeValidator(t, idp) // same seed
 
@@ -328,7 +336,7 @@ func TestCodeFlowStateSurvivesAcrossNodes(t *testing.T) {
 // TestCodeFlowRejectsReusedCode: the provider burns the code, and we surface that
 // rather than issuing a second session from it.
 func TestCodeFlowRejectsReusedCode(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	v := newCodeValidator(t, idp)
 
 	authURL, _ := v.StartLogin("https://s3.example.com/dashboard/oidc-callback")
@@ -345,7 +353,7 @@ func TestCodeFlowRejectsReusedCode(t *testing.T) {
 // TestCodeFlowRejectsWrongClientSecret checks we actually send the credential and
 // surface the provider's complaint, which is the first thing an operator hits.
 func TestCodeFlowRejectsWrongClientSecret(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{clientSecret: "right-secret"})
+	idp := newCodeFlowIdP(t, idpOptions{clientSecret: "right-secret"})
 	v := newCodeValidator(t, idp)
 	v.SetClientSecret("wrong-secret")
 
@@ -364,7 +372,7 @@ func TestCodeFlowRejectsWrongClientSecret(t *testing.T) {
 // TestCodeFlowRejectsNonceMismatch stops an ID token minted for a different login
 // from being accepted for this one.
 func TestCodeFlowRejectsNonceMismatch(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	v := newCodeValidator(t, idp)
 
 	authURL, _ := v.StartLogin("https://s3.example.com/dashboard/oidc-callback")
@@ -384,7 +392,7 @@ func TestCodeFlowRejectsNonceMismatch(t *testing.T) {
 
 // TestCodeFlowRejectsExpiredState bounds how long a started login stays usable.
 func TestCodeFlowRejectsExpiredState(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{})
+	idp := newCodeFlowIdP(t, idpOptions{})
 	v := newCodeValidator(t, idp)
 
 	expired, err := v.sealState(loginState{
@@ -403,7 +411,7 @@ func TestCodeFlowRejectsExpiredState(t *testing.T) {
 // TestImplicitOnlyProviderStillWorks: a provider that advertises no code flow must
 // keep using the implicit path rather than being broken by the new one.
 func TestImplicitOnlyProviderStillWorks(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{noCodeSupport: true})
+	idp := newCodeFlowIdP(t, idpOptions{noCodeSupport: true})
 	v := newCodeValidator(t, idp)
 
 	if v.SupportsCodeFlow() {
@@ -421,7 +429,7 @@ func TestImplicitOnlyProviderStillWorks(t *testing.T) {
 // TestCodeFlowWithoutPKCESupport covers a provider that does not offer S256: the
 // login still works, authenticated by the client secret alone.
 func TestCodeFlowWithoutPKCESupport(t *testing.T) {
-	idp := newCodeFlowIdP(t, codeFlowIdP{noPKCE: true, clientSecret: "s3cret"})
+	idp := newCodeFlowIdP(t, idpOptions{noPKCE: true, clientSecret: "s3cret"})
 	v := newCodeValidator(t, idp)
 
 	authURL, err := v.StartLogin("https://s3.example.com/dashboard/oidc-callback")

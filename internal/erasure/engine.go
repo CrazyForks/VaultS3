@@ -22,6 +22,27 @@ type Engine struct {
 	// backends[0] is always the inner engine. Additional backends
 	// come from extra data directories (for single-node multi-disk EC).
 	backends []storage.Engine
+	// bucketEnabled, when set, decides per bucket whether writes are erasure
+	// coded, so a bucket holding disposable data can skip the parity overhead
+	// while others keep it (issue #39). Nil means every bucket is coded, which is
+	// how erasure behaved before it could be set per bucket.
+	//
+	// Only writes consult this. Reads and deletes detect the format from the
+	// object itself, so flipping the setting never strands data already written
+	// either way, and a bucket may legitimately hold both kinds.
+	bucketEnabled func(bucket string) bool
+}
+
+// SetBucketPolicy wires the per-bucket erasure decision (issue #39). No-op when
+// unset: every bucket is erasure coded, matching the previous global behaviour.
+func (e *Engine) SetBucketPolicy(fn func(bucket string) bool) { e.bucketEnabled = fn }
+
+// encodesBucket reports whether new writes to a bucket should be erasure coded.
+func (e *Engine) encodesBucket(bucket string) bool {
+	if e.bucketEnabled == nil {
+		return true
+	}
+	return e.bucketEnabled(bucket)
 }
 
 // NewEngine creates an erasure coding engine wrapping the inner engine.
@@ -74,6 +95,13 @@ func (e *Engine) DeleteBucketDir(bucket string) error {
 // --- Object operations ---
 
 func (e *Engine) PutObject(bucket, key string, reader io.Reader, size int64) (int64, string, error) {
+	// A bucket that opted out of erasure coding streams straight to the inner
+	// engine, so it pays neither the parity overhead nor the whole-object buffer
+	// that encoding requires (issue #39).
+	if !e.encodesBucket(bucket) {
+		return e.inner.PutObject(bucket, key, reader, size)
+	}
+
 	// Read all data into memory
 	data, err := io.ReadAll(reader)
 	if err != nil {

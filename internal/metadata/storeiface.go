@@ -140,6 +140,8 @@ type StoreAPI interface {
 	SetObjectTier(bucket, key, tier string) error
 	TrimChangeLog(beforeSeq uint64) error
 	UpdateBucketQuota(name string, maxSizeBytes, maxObjects int64) error
+	SetBucketDurability(name string, erasure *bool, replicas *int) error
+	BucketDurability(name string, defaultErasure bool, defaultReplicas int) Durability
 	UpdateIAMGroup(group IAMGroup) error
 	UpdateIAMPolicy(policy IAMPolicy) error
 	UpdateIAMUser(user IAMUser) error

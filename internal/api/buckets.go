@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 )
 
 type bucketListItem struct {
@@ -24,6 +26,9 @@ type bucketDetail struct {
 	MaxSizeBytes int64           `json:"maxSizeBytes,omitempty"`
 	MaxObjects   int64           `json:"maxObjects,omitempty"`
 	Policy       json.RawMessage `json:"policy,omitempty"`
+	// How much protection this bucket's data gets, after its own overrides are
+	// applied to the server defaults (issue #39).
+	Durability metadata.Durability `json:"durability"`
 }
 
 type createBucketRequest struct {
@@ -118,6 +123,7 @@ func (h *APIHandler) handleGetBucket(w http.ResponseWriter, _ *http.Request, nam
 		ObjectCount:  count,
 		MaxSizeBytes: b.MaxSizeBytes,
 		MaxObjects:   b.MaxObjects,
+		Durability:   h.store.BucketDurability(name, h.cfg.Erasure.Enabled, h.cfg.Cluster.Placement.ReplicaCount),
 	}
 	if len(policyBytes) > 0 {
 		detail.Policy = json.RawMessage(policyBytes)

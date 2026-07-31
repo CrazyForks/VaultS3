@@ -52,6 +52,10 @@ type BucketHandler struct {
 	store  metadata.StoreAPI
 	engine storage.Engine
 	keyMgr *bucketcrypto.Manager // per-bucket encryption keys (nil if unconfigured)
+	// Server-wide durability defaults, reported for buckets that set no override
+	// of their own (issue #39).
+	defaultErasure  bool
+	defaultReplicas int
 }
 
 // ListBuckets responds to GET / with a list of all buckets.
@@ -263,6 +267,60 @@ func (h *BucketHandler) PutBucketQuota(w http.ResponseWriter, r *http.Request, b
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PutBucketDurability handles PUT /{bucket}?durability, setting how much
+// protection a bucket's data gets: whether new objects are erasure coded, and how
+// many cluster nodes hold a copy (issue #39).
+//
+// Either field may be omitted or null to inherit the server default. Existing
+// objects keep the layout they were written with; only later writes change.
+func (h *BucketHandler) PutBucketDurability(w http.ResponseWriter, r *http.Request, bucket string) {
+	if !h.store.BucketExists(bucket) {
+		writeS3Error(w, "NoSuchBucket", "Bucket does not exist", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		ErasureEnabled *bool `json:"erasure_enabled"`
+		ReplicaCount   *int  `json:"replica_count"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeS3Error(w, "MalformedJSON", "Could not parse request body", http.StatusBadRequest)
+		return
+	}
+	if req.ReplicaCount != nil && *req.ReplicaCount < 1 {
+		writeS3Error(w, "InvalidArgument", "replica_count must be at least 1", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.store.SetBucketDurability(bucket, req.ErasureEnabled, req.ReplicaCount); err != nil {
+		slog.Error("internal error", "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetBucketDurability handles GET /{bucket}?durability, reporting the settings in
+// force and whether each one is the bucket's own choice or the server default.
+func (h *BucketHandler) GetBucketDurability(w http.ResponseWriter, r *http.Request, bucket string) {
+	if !h.store.BucketExists(bucket) {
+		writeS3Error(w, "NoSuchBucket", "Bucket does not exist", http.StatusNotFound)
+		return
+	}
+
+	d := h.store.BucketDurability(bucket, h.defaultErasure, h.defaultReplicas)
+	resp := struct {
+		ErasureEnabled  bool `json:"erasure_enabled"`
+		ReplicaCount    int  `json:"replica_count"`
+		ErasureExplicit bool `json:"erasure_explicit"`
+		ReplicaExplicit bool `json:"replica_explicit"`
+	}{d.ErasureEnabled, d.ReplicaCount, d.ErasureExplicit, d.ReplicaExplicit}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // GetBucketQuota handles GET /{bucket}?quota.

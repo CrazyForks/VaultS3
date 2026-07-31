@@ -264,6 +264,13 @@ func New(cfg *config.Config) (*Server, error) {
 			healInterval = 3600
 		}
 		ecHealer = erasure.NewHealer(store, ecEngine, healInterval)
+
+		// Let a bucket opt out of erasure coding, so data that is cheap to
+		// recreate can be stored once instead of carrying parity (issue #39).
+		// The global setting remains the default for buckets that say nothing.
+		ecEngine.SetBucketPolicy(func(bucket string) bool {
+			return store.BucketDurability(bucket, true, 0).ErasureEnabled
+		})
 	}
 
 	// Initialize cluster if enabled
@@ -384,6 +391,8 @@ func New(cfg *config.Config) (*Server, error) {
 	writable := &atomic.Bool{}
 	writable.Store(true)
 	s3h.SetWritableFlag(writable)
+	// Defaults a bucket inherits when it sets no durability override (issue #39).
+	s3h.SetDurabilityDefaults(cfg.Erasure.Enabled, cfg.Cluster.Placement.ReplicaCount)
 
 	// Keep in-progress multipart upload metadata on the node-local store, not Raft.
 	// All requests for an object route to the same owner node and its parts live on
@@ -425,19 +434,33 @@ func New(cfg *config.Config) (*Server, error) {
 			}
 		})
 
-		// replica_count > 1: after a write, stream the object's data to the other
-		// nodes in its replica set so a node loss doesn't make it unavailable (issue
-		// #37). Best-effort + async — never blocks/fails the client write; GET
-		// failover already tries replicas. Each peer is streamed from the engine
-		// (no whole-object buffering).
-		if cfg.Cluster.Placement.ReplicaCount > 1 {
+		// How many nodes hold each object. A bucket may ask for fewer copies than
+		// the cluster default (scratch data) or more, so this is resolved per write
+		// rather than fixed at startup, and stays installed even when the default is
+		// 1 because a bucket can raise its own count above it (issue #39).
+		defaultReplicas := cfg.Cluster.Placement.ReplicaCount
+		replicasFor := func(bucket string) int {
+			return metaStore.BucketDurability(bucket, cfg.Erasure.Enabled, defaultReplicas).ReplicaCount
+		}
+		if failoverProxy != nil {
+			failoverProxy.SetReplicaPolicy(replicasFor)
+		}
+
+		// After a write, stream the object's data to the other nodes in its replica
+		// set so a node loss doesn't make it unavailable (issue #37). Best-effort +
+		// async — never blocks/fails the client write; GET failover already tries
+		// replicas. Each peer is streamed from the engine (no whole-object buffering).
+		{
 			repSecret := cfg.Cluster.Secret
 			repSelf := cfg.Cluster.NodeID
 			repScheme := reapScheme
-			repCount := cfg.Cluster.Placement.ReplicaCount
 			localEngine := engine
 			ring := clusterProxy.Ring()
 			s3h.SetPlacementReplicator(func(bucket, key string) {
+				repCount := replicasFor(bucket)
+				if repCount <= 1 {
+					return // this bucket keeps a single copy
+				}
 				addrs := clusterProxy.NodeAddrs()
 				for _, id := range ring.GetNodes(bucket, key, repCount) {
 					if id == repSelf {

@@ -90,6 +90,14 @@ func NewHandler(store metadata.StoreAPI, engine storage.Engine, auth *Authentica
 	return h
 }
 
+// SetDurabilityDefaults records the server-wide erasure and replica settings, so
+// GET ?durability can report what a bucket without its own override actually gets
+// (issue #39).
+func (h *Handler) SetDurabilityDefaults(erasure bool, replicas int) {
+	h.buckets.defaultErasure = erasure
+	h.buckets.defaultReplicas = replicas
+}
+
 // SetLocalMultipartStore points in-progress multipart upload metadata at the
 // node-local store instead of the Raft-replicated one. In a cluster every
 // request for an object routes to the same owner node and its part data is
@@ -664,6 +672,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Per-bucket durability: erasure coding and replica count (issue #39)
+		if _, ok := bq["durability"]; ok {
+			switch r.Method {
+			case http.MethodPut:
+				h.buckets.PutBucketDurability(w, r, bucket)
+			case http.MethodGet:
+				h.buckets.GetBucketDurability(w, r, bucket)
+			default:
+				writeS3Error(w, "MethodNotAllowed", "Method not allowed", http.StatusMethodNotAllowed)
+			}
+			return
+		}
+
 		// Quota operations
 		if _, ok := bq["quota"]; ok {
 			switch r.Method {
@@ -873,10 +894,10 @@ func (h *Handler) parseRequest(host, path string) (bucket, key string) {
 // sub-resource added to the router without being added here stays authenticated,
 // which is the safe direction to fail.
 var bucketSubresources = []string{
-	"acl", "cors", "delete", "encryption", "lambda", "lifecycle", "location",
-	"logging", "notification", "object-lock", "policy", "publicAccessBlock",
-	"quota", "replication", "tagging", "uploads", "versioning", "versions",
-	"website",
+	"acl", "cors", "delete", "durability", "encryption", "lambda", "lifecycle",
+	"location", "logging", "notification", "object-lock", "policy",
+	"publicAccessBlock", "quota", "replication", "tagging", "uploads",
+	"versioning", "versions", "website",
 }
 
 // isPlainBucketListing reports whether a bucket-level GET is an ordinary object

@@ -144,6 +144,8 @@ const (
 	cmdPutReplicationStatus  uint16 = 57
 
 	cmdPutBackupRecord uint16 = 58
+
+	cmdSetBucketDurability uint16 = 59
 )
 
 type raftCommand struct {
@@ -188,6 +190,16 @@ func (d *DistributedStore) PutBucketPolicy(bucket string, policyJSON []byte) err
 
 func (d *DistributedStore) DeleteBucketPolicy(bucket string) error {
 	return d.apply(cmdDeleteBucketPolicy, struct{ Bucket string }{bucket})
+}
+
+// SetBucketDurability replicates a bucket's erasure/replica overrides, so every
+// node makes the same placement decision for that bucket (issue #39).
+func (d *DistributedStore) SetBucketDurability(name string, erasure *bool, replicas *int) error {
+	return d.apply(cmdSetBucketDurability, struct {
+		Name           string
+		ErasureEnabled *bool
+		ReplicaCount   *int
+	}{name, erasure, replicas})
 }
 
 func (d *DistributedStore) UpdateBucketQuota(name string, maxSizeBytes, maxObjects int64) error {

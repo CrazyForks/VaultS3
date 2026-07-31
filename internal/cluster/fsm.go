@@ -98,6 +98,17 @@ func (f *FSM) applyCommand(cmd Command) interface{} {
 		}
 		return f.store.UpdateBucketQuota(p.Name, p.MaxSizeBytes, p.MaxObjects)
 
+	case CmdSetBucketDurability:
+		var p struct {
+			Name           string
+			ErasureEnabled *bool
+			ReplicaCount   *int
+		}
+		if err := json.Unmarshal(cmd.Data, &p); err != nil {
+			return err
+		}
+		return f.store.SetBucketDurability(p.Name, p.ErasureEnabled, p.ReplicaCount)
+
 	case CmdPutBucketTags:
 		var p struct {
 			Bucket string

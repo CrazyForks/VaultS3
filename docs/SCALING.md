@@ -534,6 +534,23 @@ backup:
   take out a shard. This replication is **best-effort and asynchronous** (eventual
   redundancy, not synchronous write-quorum), so pair it with **erasure coding** for
   disk-loss protection of freshly-written data.
+- **The two multipliers compound, and both can be set per bucket.** Erasure coding
+  and replication are independent, so a bucket's cost on disk is roughly
+  `replica_count x erasure overhead`. Measured on a 3-node cluster with 4+2 coding
+  (1.5x) and `replica_count: 3`:
+
+  | Bucket setting | On disk, per byte stored |
+  |----------------|--------------------------|
+  | server defaults (coded, 3 copies) | **4.52x** |
+  | `--erasure=off` (3 copies) | 3.00x |
+  | `--replicas=1` (coded) | 1.51x |
+  | `--erasure=off --replicas=1` | **1.00x** |
+
+  Use `vaults3-cli bucket durability <bucket> [--erasure=on|off|default]
+  [--replicas=N|default]` to set them, and note that turning erasure off alone
+  still leaves every copy in place: on a replicated cluster the replica count is
+  usually the bigger of the two multipliers. Only later writes change; objects
+  already stored keep their layout, and reads handle both.
 - **Memory sizing.** A pod that is `OOMKilled` mid-benchmark takes its shard
   offline while it restarts (surfacing as `503 SlowDown` for keys only it holds,
   once the retry against the other holders has also failed). Size per-pod memory for your workload —

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,7 +20,12 @@ Subcommands:
   list                List all buckets
   create <name>       Create a bucket
   delete <name>       Delete a bucket
-  info <name>         Show bucket details`)
+  info <name>         Show bucket details
+  durability <name> [--erasure=on|off|default] [--replicas=N|default]
+                      Show or set how much protection a bucket's data gets:
+                      whether new objects are erasure coded, and how many
+                      cluster nodes hold a copy. Omit the flags to show the
+                      current settings. Existing objects are not rewritten.`)
 		os.Exit(1)
 	}
 
@@ -41,6 +49,11 @@ Subcommands:
 			fatal("bucket info requires a bucket name")
 		}
 		bucketInfo(args[1])
+	case "durability":
+		if len(args) < 2 {
+			fatal("bucket durability requires a bucket name")
+		}
+		bucketDurability(args[1], args[2:])
 	default:
 		fatal("unknown bucket subcommand: " + args[0])
 	}
@@ -136,4 +149,83 @@ func bucketInfo(name string) {
 
 	data, _ := json.MarshalIndent(info, "", "  ")
 	fmt.Println(string(data))
+}
+
+// bucketDurability shows or sets a bucket's erasure-coding and replica-count
+// overrides (issue #39). With no flags it reports what is in force and whether
+// each value is the bucket's own choice or the server default.
+func bucketDurability(name string, flags []string) {
+	if len(flags) == 0 {
+		resp, err := s3Request("GET", "/"+name+"?durability", nil)
+		if err != nil {
+			fatal(err.Error())
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)))
+		}
+		var d struct {
+			ErasureEnabled  bool `json:"erasure_enabled"`
+			ReplicaCount    int  `json:"replica_count"`
+			ErasureExplicit bool `json:"erasure_explicit"`
+			ReplicaExplicit bool `json:"replica_explicit"`
+		}
+		if err := json.Unmarshal(body, &d); err != nil {
+			fatal("parse response: " + err.Error())
+		}
+		source := func(explicit bool) string {
+			if explicit {
+				return "set on this bucket"
+			}
+			return "server default"
+		}
+		fmt.Printf("Bucket:          %s\n", name)
+		fmt.Printf("Erasure coding:  %-5v (%s)\n", d.ErasureEnabled, source(d.ErasureExplicit))
+		fmt.Printf("Replica count:   %-5d (%s)\n", d.ReplicaCount, source(d.ReplicaExplicit))
+		return
+	}
+
+	payload := map[string]interface{}{}
+	for _, f := range flags {
+		switch {
+		case strings.HasPrefix(f, "--erasure="):
+			switch v := strings.TrimPrefix(f, "--erasure="); v {
+			case "on", "true", "yes":
+				payload["erasure_enabled"] = true
+			case "off", "false", "no":
+				payload["erasure_enabled"] = false
+			case "default", "inherit":
+				payload["erasure_enabled"] = nil
+			default:
+				fatal("--erasure must be on, off, or default")
+			}
+		case strings.HasPrefix(f, "--replicas="):
+			v := strings.TrimPrefix(f, "--replicas=")
+			if v == "default" || v == "inherit" {
+				payload["replica_count"] = nil
+				continue
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				fatal("--replicas must be a positive number, or default")
+			}
+			payload["replica_count"] = n
+		default:
+			fatal("unknown flag: " + f)
+		}
+	}
+
+	body, _ := json.Marshal(payload)
+	resp, err := s3Request("PUT", "/"+name+"?durability", bytes.NewReader(body))
+	if err != nil {
+		fatal(err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		fatal(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(raw)))
+	}
+	fmt.Printf("Updated durability for %s. Objects already stored keep their current layout.\n", name)
+	bucketDurability(name, nil)
 }

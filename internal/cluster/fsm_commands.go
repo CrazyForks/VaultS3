@@ -79,6 +79,9 @@ const (
 
 	// Backup operations
 	CmdPutBackupRecord
+
+	// Per-bucket durability overrides (erasure coding, replica count)
+	CmdSetBucketDurability
 )
 
 // Command is the serialized Raft log entry.

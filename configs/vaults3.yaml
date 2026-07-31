@@ -214,7 +214,12 @@ auto_update:
   check_interval_hours: 24
   allow_major: false           # never auto-cross a major version
 
-# Erasure coding (optional, works with or without clustering)
+# Erasure coding (optional, works with or without clustering).
+# `enabled` here is the DEFAULT for every bucket. A single bucket can opt in or out
+# of both erasure coding and its replica count with
+# `vaults3-cli bucket durability <bucket> --erasure=off --replicas=1`, so data that
+# is cheap to recreate can be stored once while the rest keeps its parity and
+# copies. Only later writes are affected; existing objects keep their layout.
 erasure:
   enabled: false
   data_shards: 4
@@ -234,6 +239,8 @@ cluster:
   peers: []                    # ["node-2@host2:9001", "node-3@host3:9001"]
   peer_apis: {}                # nodeID → "host:apiPort" for proxying
   placement:
+    # Default number of nodes holding each object; override per bucket with
+    # `vaults3-cli bucket durability <bucket> --replicas=N`.
     replica_count: 3           # keep >= 2 in production: with 1 copy a read can miss during ring churn
     read_quorum: 2
     write_quorum: 2

@@ -11,6 +11,9 @@ import (
 type FailoverProxy struct {
 	*Proxy
 	detector *FailureDetector
+	// replicasFor resolves a bucket's replica count, overriding the cluster
+	// default when that bucket asks for a different level of protection.
+	replicasFor func(bucket string) int
 }
 
 // NewFailoverProxy creates a failover-aware proxy.
@@ -36,7 +39,7 @@ func (f *FailoverProxy) ShouldProxy(bucket, key string) string {
 		return ""
 	}
 
-	holders := f.ring.GetNodes(bucket, key, f.dataReplicas())
+	holders := f.ring.GetNodes(bucket, key, f.dataReplicas(bucket))
 	if len(holders) == 0 {
 		return ""
 	}
@@ -66,10 +69,26 @@ func (f *FailoverProxy) ShouldProxy(bucket, key string) string {
 	return holders[0]
 }
 
-// dataReplicas is the number of ring nodes that hold an object's data — the set a
-// read may legitimately be served from. Never less than 1.
-func (f *FailoverProxy) dataReplicas() int {
+// SetReplicaPolicy wires a per-bucket replica count, so a bucket holding data
+// that is cheap to recreate can be stored once while the rest keeps its copies
+// (issue #39). Unset means every bucket uses the cluster default.
+func (f *FailoverProxy) SetReplicaPolicy(fn func(bucket string) int) { f.replicasFor = fn }
+
+// dataReplicas is the number of ring nodes that hold this bucket's data — the set
+// a read may legitimately be served from. Never less than 1.
+//
+// Lowering a bucket's replica count leaves earlier objects with copies on nodes
+// that are no longer holders. Reads stay correct because the ring order is stable,
+// so the primary holder is unchanged and still has the data; the surplus copies
+// are simply dead weight until the object is deleted (a delete reaps every node)
+// or a rebalance runs.
+func (f *FailoverProxy) dataReplicas(bucket string) int {
 	n := f.placement.ReplicaCount
+	if f.replicasFor != nil {
+		if perBucket := f.replicasFor(bucket); perBucket > 0 {
+			n = perBucket
+		}
+	}
 	if n < 1 {
 		n = 1
 	}
@@ -108,7 +127,7 @@ func (f *FailoverProxy) ForwardWithRetry(w http.ResponseWriter, r *http.Request,
 func (f *FailoverProxy) forwardCandidates(bucket, key, target string) []string {
 	candidates := []string{target}
 	selfID := f.node.NodeID()
-	for _, id := range f.ring.GetNodes(bucket, key, f.dataReplicas()) {
+	for _, id := range f.ring.GetNodes(bucket, key, f.dataReplicas(bucket)) {
 		if id != target && id != selfID {
 			candidates = append(candidates, id)
 		}
@@ -143,8 +162,8 @@ func (f *FailoverProxy) ForwardToDataHolder(w http.ResponseWriter, r *http.Reque
 	selfID := f.node.NodeID()
 	r.Header.Set(dataFallbackHeader, selfID)
 
-	peers := make([]string, 0, f.dataReplicas())
-	for _, id := range f.ring.GetNodes(bucket, key, f.dataReplicas()) {
+	peers := make([]string, 0, f.dataReplicas(bucket))
+	for _, id := range f.ring.GetNodes(bucket, key, f.dataReplicas(bucket)) {
 		if id != selfID {
 			peers = append(peers, id)
 		}

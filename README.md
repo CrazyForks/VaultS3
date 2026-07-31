@@ -128,7 +128,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **S3 event notifications**: Per-bucket webhook notifications on object mutations with event type and key prefix/suffix filtering, plus Kafka, NATS, Redis, AMQP/RabbitMQ, PostgreSQL, and Elasticsearch backends
 - **Raft clustering**: Multi-node cluster with Hashicorp Raft consensus for strongly consistent distributed metadata, automatic leader election, and node join/leave via HTTP API
 - **Consistent hashing**: xxhash64-based hash ring with virtual nodes for automatic data placement and request routing across cluster nodes via reverse proxy. A read whose data has not yet been copied to the node serving it is fetched from a holder that has it, so a `GET` never reports "not found" for an object that was just written, and a hop that fails before any response reaches the client is retried against the object's other holders instead of surfacing as a gateway error
-- **Erasure coding**: Reed-Solomon encoding (configurable data/parity shards) for disk-failure protection with background healer that auto-reconstructs degraded objects. Reads **stream** the data shards, so GET time-to-first-byte stays flat regardless of object size, and fall back to parity reconstruction only when a shard is actually missing
+- **Erasure coding**: Reed-Solomon encoding (configurable data/parity shards) for disk-failure protection with background healer that auto-reconstructs degraded objects. Reads **stream** the data shards, so GET time-to-first-byte stays flat regardless of object size, and fall back to parity reconstruction only when a shard is actually missing. **Settable per bucket** alongside replica count (`vaults3-cli bucket durability`), so scratch data can be stored once while the buckets that matter keep their parity and copies: on a 3-node cluster with 4+2 coding and 3 replicas, the same data costs 4.52x with the defaults and 1.00x with both turned off
 - **High availability**: Automatic failure detection (health probes with suspect/down state machine), failover proxy routing to healthy replicas, and background rebalancer for membership changes. Inter-node traffic shares a pooled HTTP transport (connection reuse instead of a new socket per call), and a node that genuinely cannot serve a request answers `503 SlowDown` with an S3 error document, which every mainstream SDK retries on its own
 - **Scalable listing**: Object listing is served from the sorted BoltDB metadata index (seek to the page, `O(log n + page_size)`), so `ListObjectsV2` page latency stays flat (~0.7 ms per 1000-key page) whether a prefix holds a thousand or **a hundred million** objects (measured, not extrapolated), no full-bucket scan
   - 📖 See the **[Scaling & Operations Guide](docs/SCALING.md)** for multi-disk erasure coding, multi-node cluster setup, large-prefix listing, and lost-disk / lost-server recovery runbooks
@@ -249,6 +249,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 | Object Tagging | `PUT/GET/DELETE /{bucket}/{key}?tagging` | Done |
 | Bucket Policy | `PUT/GET/DELETE /{bucket}?policy` | Done |
 | Bucket Quota | `PUT/GET /{bucket}?quota` | Done |
+| Bucket Durability (erasure + replicas) | `PUT/GET /{bucket}?durability` | Done |
 | Bucket Versioning | `PUT/GET /{bucket}?versioning` | Done |
 | List Object Versions | `GET /{bucket}?versions` | Done |
 | Object Locking (Legal Hold) | `PUT/GET /{bucket}/{key}?legal-hold` | Done |
@@ -1041,6 +1042,7 @@ vaults3-cli replication status
 vaults3-cli replication queue
 
 # Cluster operations (see docs/SCALING.md)
+vaults3-cli bucket durability scratch --erasure=off --replicas=1  # store this bucket once
 vaults3-cli cluster status                     # members, leader, drain state
 vaults3-cli cluster join node-3 10.0.0.4:7000  # add a member (against the leader)
 vaults3-cli cluster drain node-2               # stop a node accepting writes (reads continue)

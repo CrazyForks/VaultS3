@@ -6,6 +6,35 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.44] - 2026-07-31
+### Added
+- **Erasure coding and replica count can now be set per bucket** (issue #39,
+  requested by kesavkolla), so a bucket holding data that is cheap to recreate can
+  be stored once while the buckets that matter keep their parity and copies. Both
+  settings are independent, and a bucket that sets neither follows the server
+  defaults.
+  - `PUT /{bucket}?durability` with `{"erasure_enabled": false, "replica_count": 1}`,
+    `GET /{bucket}?durability` to read what is in force, and
+    `vaults3-cli bucket durability <bucket> [--erasure=on|off|default] [--replicas=N|default]`.
+    Either field may be null to go back to inheriting the default. The resolved
+    settings also appear on `GET /api/v1/buckets/{name}`.
+  - Measured on a live 3-node cluster with erasure 4+2 and `replica_count: 3`, the
+    same 4 MiB of data occupied **18.1 MiB** with the defaults (4.52x: three copies
+    of a 1.5x-coded object), **12.0 MiB** with erasure off, **6.0 MiB** with one
+    replica, and **4.0 MiB** with both turned off, all read back byte-identical.
+  - Only later writes are affected. Objects already stored keep the layout they
+    were written with, which is safe because reads detect an object's layout from
+    the object itself, so a bucket may hold both kinds at once. Lowering a replica
+    count leaves surplus copies on nodes that are no longer holders; those are
+    reclaimed when the object is deleted or a rebalance runs.
+  - A bucket that opts out of erasure coding also skips the whole-object buffering
+    that encoding requires, so its writes stream straight to disk.
+
+### Fixed
+- **`go vet` failure in the OIDC code-flow tests** introduced in 4.4.43: the test
+  provider was passed by value while containing a mutex (`copylocks`). Test-only,
+  no effect on the server, but it broke CI.
+
 ## [4.4.43] - 2026-07-31
 ### Added
 - **SSO now uses the authorization-code flow with PKCE** (issue #44). VaultS3 only
@@ -1218,7 +1247,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...HEAD
+[4.4.44]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...v4.4.44
 [4.4.43]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...v4.4.43
 [4.4.42]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...v4.4.42
 [4.4.41]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...v4.4.41
