@@ -83,9 +83,7 @@ func NewFailureDetector(selfID string, cfg DetectorConfig) *FailureDetector {
 		probInterval: time.Duration(cfg.ProbeIntervalSecs) * time.Second,
 		suspectAfter: cfg.SuspectAfter,
 		downAfter:    cfg.DownAfter,
-		client: &http.Client{
-			Timeout: time.Duration(cfg.ProbeTimeoutSecs) * time.Second,
-		},
+		client:       InterNodeClient(time.Duration(cfg.ProbeTimeoutSecs) * time.Second),
 	}
 }
 

@@ -211,7 +211,7 @@ func (n *Node) leaderAppliedIndex(timeout time.Duration) (uint64, error) {
 	if n.cfg.Secret != "" {
 		req.Header.Set(clusterSecretHeader, n.cfg.Secret)
 	}
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	resp, err := InterNodeClient(timeout).Do(req)
 	if err != nil {
 		return 0, err
 	}

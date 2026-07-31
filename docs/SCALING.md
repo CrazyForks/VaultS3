@@ -354,6 +354,15 @@ cluster:
 - **Failure detection** is automatic: the detector marks a peer `suspect` after
   `suspect_after` missed probes and `down` after `down_after`. The failover proxy then
   routes reads/writes to a healthy replica.
+- **Log lines worth alerting on.** These name the condition instead of leaving you to
+  infer it from client-side errors:
+
+  | Log message | Meaning |
+  |-------------|---------|
+  | `proxy: upstream hop failed before any response` | A hop to a peer failed and was retried or sent to another holder. Occasional lines during a restart are normal; a steady stream means a peer is unhealthy. |
+  | `proxy: every candidate node failed` | No holder could serve the request, so the client got `503 SlowDown`. Always worth investigating. |
+  | `object data temporarily unavailable: holder unreachable` | The object exists but the node holding its bytes is unreachable; the client was told to retry. |
+  | `object metadata/data desync` | The object is listed but its data is missing on **every** holder. This one is a real inconsistency: reconcile with `vaults3-cli object verify --repair`. |
 
 ---
 
@@ -487,8 +496,19 @@ backup:
   a single node, so during that brief reconcile window a read that routes to the
   wrong node can miss; set `placement.replica_count: 2` (or more) for production so
   more than one node holds each object and reads survive churn and node loss.
-- **A down/OOM node fails fast.** Proxied requests to an unreachable shard owner
-  time out quickly (short dial timeout) and return `502` instead of hanging.
+- **Object data replicates in the background, and reads follow it.** With
+  `replica_count > 1` the object's bytes are copied to the other holders after the
+  write is acknowledged, so for a moment a holder can have the object's metadata but
+  not its data. A read that lands there fetches the object from a holder that has it
+  rather than reporting `404`, so a `GET` right after a `PUT` is served whichever
+  node it reaches (issue #42).
+- **A down/OOM node fails fast, and transient failures are retried.** Proxied
+  requests to an unreachable shard owner time out quickly (short dial timeout). A hop
+  that fails before any response byte reaches the client is retried, then tried
+  against the object's other data holders, so a restarting pod or a stale pooled
+  connection does not surface as an error. When no node can serve the request the
+  answer is `503 SlowDown` with an S3 error document — a retryable, parseable error
+  rather than a bare `502` — and every mainstream S3 SDK retries it automatically.
 
 ## 9c. Redundancy and sizing (read this before production)
 
@@ -501,8 +521,8 @@ backup:
   redundancy, not synchronous write-quorum), so pair it with **erasure coding** for
   disk-loss protection of freshly-written data.
 - **Memory sizing.** A pod that is `OOMKilled` mid-benchmark takes its shard
-  offline while it restarts (surfacing as `upstream node unavailable` /
-  `connection refused` for keys it owns). Size per-pod memory for your workload —
+  offline while it restarts (surfacing as `503 SlowDown` for keys only it holds,
+  once the retry against the other holders has also failed). Size per-pod memory for your workload —
   large-object multipart and high concurrency need headroom well above a few GiB.
   This is an operational limit, not a server bug: raise the pod memory limit until
   OOMKills stop, then any residual errors are pure consistency (addressed above).

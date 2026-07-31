@@ -66,12 +66,46 @@ type ObjectHandler struct {
 	// loss doesn't make it unavailable (issue #37). Best-effort + asynchronous —
 	// never blocks or fails the client write; GET failover already tries replicas.
 	replicatePlacement func(bucket, key string)
+	// dataHolderFallback, if set (cluster mode), re-routes a read this node has
+	// metadata for but no readable data to a peer that holds the object's bytes.
+	// That gap is normal and transient while replicatePlacement above is still in
+	// flight, and without this a GET on the wrong holder 404s an object that was
+	// just written successfully (issue #42).
+	dataHolderFallback DataHolderFallbackFunc
 	onNotification     NotificationFunc
 	onReplication      ReplicationFunc
 	onScan             ScanFunc
 	onSearchUpdate     SearchUpdateFunc
 	onLambda           LambdaFunc
 	accessUpdater      *metadata.AccessUpdater
+}
+
+// serveFromDataHolder asks a peer holder to serve a read this node has metadata
+// for but no readable data.
+//
+// It returns true once the response belongs to it — either a peer served the
+// object, or no holder could be reached and the client was told to retry. A false
+// return means the object's data is genuinely missing cluster-wide and the caller
+// should report it not-found. Always false outside a cluster.
+func (h *ObjectHandler) serveFromDataHolder(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+	if h.dataHolderFallback == nil {
+		return false
+	}
+	served, unreachable := h.dataHolderFallback(w, r, bucket, key)
+	if served {
+		return true
+	}
+	if unreachable {
+		// The object exists and a holder has its data, but that node is currently
+		// unreachable (restarting, rescheduled, briefly overloaded). Answering
+		// "not found" here would be a lie the client cannot recover from, so say
+		// "try again" instead, which every S3 SDK retries on its own (issue #42).
+		slog.Warn("object data temporarily unavailable: holder unreachable, asking client to retry",
+			"bucket", bucket, "key", key)
+		writeS3Error(w, "SlowDown", "Object data is temporarily unavailable, please retry", http.StatusServiceUnavailable)
+		return true
+	}
+	return false
 }
 
 // multipartStore returns the store used for in-progress multipart upload
@@ -520,6 +554,11 @@ func (h *ObjectHandler) GetObject(w http.ResponseWriter, r *http.Request, bucket
 		}
 		reader, size, err = h.engine.GetObjectVersion(bucket, key, versionID)
 		if err != nil {
+			// The version's metadata is here but its bytes may live on another
+			// holder that has not been copied to yet (issue #42).
+			if h.serveFromDataHolder(w, r, bucket, key) {
+				return
+			}
 			writeS3Error(w, "NoSuchKey", "Object not found", http.StatusNotFound)
 			return
 		}
@@ -553,10 +592,16 @@ func (h *ObjectHandler) GetObject(w http.ResponseWriter, r *http.Request, bucket
 			reader, size, err = h.engine.GetObject(bucket, key)
 		}
 		if err != nil {
-			// Metadata says the object exists (so it appears in listings) but the
-			// engine cannot read its data. This desync is exactly what makes an object
-			// "listed but not downloadable" over S3 while it looks present (issue #40).
-			// Log it loudly so operators can find and reconcile it with
+			// Metadata says the object exists but this node cannot read its data.
+			// In a cluster that is usually not corruption at all: the object was
+			// written on another holder and its bytes have not been copied here yet,
+			// so ask a holder that does have them before giving up (issue #42).
+			if h.serveFromDataHolder(w, r, bucket, key) {
+				return
+			}
+			// No peer could serve it either, so this is a genuine desync: the object
+			// appears in listings but cannot be downloaded over S3 (issue #40). Log it
+			// loudly so operators can find and reconcile it with
 			// `vaults3-cli object verify [--repair]`.
 			slog.Warn("object metadata/data desync: metadata present but data is unreadable, object lists but cannot be served over S3",
 				"bucket", bucket, "key", key, "error", err)

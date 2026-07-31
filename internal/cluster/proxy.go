@@ -2,9 +2,10 @@ package cluster
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/http/httputil"
@@ -170,16 +171,45 @@ func (p *Proxy) ShouldProxy(bucket, key string) string {
 	return primaryNode
 }
 
-// ForwardRequest proxies an HTTP request to the specified target node.
+// ForwardRequest proxies an HTTP request to the specified target node, telling the
+// client to retry if the hop fails.
 func (p *Proxy) ForwardRequest(w http.ResponseWriter, r *http.Request, targetNodeID string) {
+	if !p.forwardOnce(w, r, targetNodeID) {
+		WriteUnavailable(w)
+	}
+}
+
+// WriteUnavailable reports that no node could serve the request right now.
+//
+// It answers 503 with an S3 error document rather than a bare text 502. Both
+// details matter to a client: 503 SlowDown is the S3 way of saying "this is
+// temporary, try again", and every mainstream SDK retries it automatically,
+// whereas a 502 surfaced to the user as an unexplained "Bad Gateway" (issue #42).
+// Sending XML also means the client can name the error instead of guessing at an
+// HTML or plain-text body from something it cannot identify.
+func WriteUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Retry-After", "1")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	io.WriteString(w, xml.Header+
+		`<Error><Code>SlowDown</Code>`+
+		`<Message>The node holding this data is temporarily unavailable, please retry</Message>`+
+		`</Error>`)
+}
+
+// forwardOnce proxies the request to targetNodeID and reports whether the client
+// got a response. It returns false ONLY when the hop failed before a single byte
+// reached the client, which is exactly the case where the caller may safely try
+// another node instead of failing the request (issue #42). Nothing is written to w
+// on a false return.
+func (p *Proxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetNodeID string) bool {
 	p.mu.RLock()
 	addr, ok := p.nodeAddrs[targetNodeID]
 	p.mu.RUnlock()
 
 	if !ok {
 		slog.Warn("proxy: unknown target node", "node_id", targetNodeID)
-		http.Error(w, "cluster node not found", http.StatusBadGateway)
-		return
+		return false
 	}
 
 	proxy := p.getOrCreateProxy(targetNodeID, addr)
@@ -199,7 +229,51 @@ func (p *Proxy) ForwardRequest(w http.ResponseWriter, r *http.Request, targetNod
 		r = traceForwardRequest(r, targetNodeID, addr)
 	}
 
-	proxy.ServeHTTP(w, r)
+	// The outcome cell lets ErrorHandler report an upstream failure back here
+	// instead of writing a 502 straight to the client.
+	outcome := &forwardOutcome{}
+	r = r.WithContext(context.WithValue(r.Context(), forwardOutcomeKey{}, outcome))
+	tw := &trackingWriter{ResponseWriter: w}
+
+	proxy.ServeHTTP(tw, r)
+
+	if outcome.err != nil && !tw.wrote {
+		slog.Warn("proxy: upstream hop failed before any response",
+			"target", targetNodeID, "addr", addr, "method", r.Method,
+			"path", r.URL.Path, "error", outcome.err)
+		return false
+	}
+	return true
+}
+
+// forwardOutcomeKey / forwardOutcome carry a failed hop's error back to
+// forwardOnce through the request context.
+type forwardOutcomeKey struct{}
+
+type forwardOutcome struct{ err error }
+
+// trackingWriter records whether anything was actually sent to the client, so a
+// hop that fails midway through a response body is never mistaken for a
+// retryable one.
+type trackingWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (t *trackingWriter) WriteHeader(code int) {
+	t.wrote = true
+	t.ResponseWriter.WriteHeader(code)
+}
+
+func (t *trackingWriter) Write(b []byte) (int, error) {
+	t.wrote = true
+	return t.ResponseWriter.Write(b)
+}
+
+func (t *trackingWriter) Flush() {
+	if f, ok := t.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // traceForwardRequest attaches an httptrace to the upstream request that logs a
@@ -288,21 +362,17 @@ func (p *Proxy) getOrCreateProxy(nodeID, addr string) *httputil.ReverseProxy {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	// Fail fast when a shard owner is down or OOM-looping instead of hanging on the
-	// default (timeout-less) transport as "upstream node unavailable" (issue #37).
-	// A short dial timeout trips quickly on a dead node; ResponseHeaderTimeout
-	// bounds a hung one — but only time-to-first-byte, so large-object streaming
-	// after the headers is unaffected.
-	proxy.Transport = &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ResponseHeaderTimeout: 10 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   16,
-	}
+	proxy.Transport = newForwardTransport()
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		// Hand the error to forwardOnce when it is watching, so it can try another
+		// holder rather than turning a transient hiccup into a client-visible
+		// failure (issue #42). Answer directly only when nobody is watching.
+		if outcome, ok := r.Context().Value(forwardOutcomeKey{}).(*forwardOutcome); ok {
+			outcome.err = err
+			return
+		}
 		slog.Error("proxy: upstream error", "target", nodeID, "addr", addr, "error", err)
-		http.Error(w, "upstream node unavailable", http.StatusBadGateway)
+		WriteUnavailable(w)
 	}
 
 	p.proxies[nodeID] = proxy

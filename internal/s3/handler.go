@@ -40,6 +40,13 @@ type LambdaFunc func(eventType, bucket, key string, size int64, etag, versionID 
 // Returns true if the request was proxied (caller should return immediately).
 type ClusterProxyFunc func(w http.ResponseWriter, r *http.Request, bucket, key string) bool
 
+// DataHolderFallbackFunc re-routes a read whose metadata is on this node but whose
+// data is not, to a cluster peer that holds the object's bytes. It reports whether
+// a peer served the read, and whether any holder was unreachable — an object whose
+// holder is restarting is temporarily unavailable rather than absent, and the two
+// deserve different answers.
+type DataHolderFallbackFunc func(w http.ResponseWriter, r *http.Request, bucket, key string) (served, unreachable bool)
+
 // Handler routes incoming S3 API requests to the appropriate handler.
 type Handler struct {
 	store               metadata.StoreAPI
@@ -177,6 +184,13 @@ func (h *Handler) isReplicationPeer(accessKey string) bool {
 // SetClusterProxy sets the function used to proxy requests to other cluster nodes.
 func (h *Handler) SetClusterProxy(fn ClusterProxyFunc) {
 	h.clusterProxy = fn
+}
+
+// SetDataHolderFallback wires the last-resort read route for a cluster node that
+// holds an object's metadata but not (yet) its data. See ForwardToDataHolder.
+// No-op single-node.
+func (h *Handler) SetDataHolderFallback(fn DataHolderFallbackFunc) {
+	h.objects.dataHolderFallback = fn
 }
 
 // SetAccessUpdater sets the batched access updater.

@@ -6,6 +6,57 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.41] - 2026-07-31
+### Fixed
+- **A clustered `GET` no longer returns "not found" for an object that was just
+  written** (issue #42, reported by vikram-a-m). Object metadata is replicated
+  through Raft and reaches every node at once, but the object's bytes are pushed to
+  the other replica holders in the background. Any holder may serve a read, so a
+  `GET` that landed on a holder inside that window was answered from metadata that
+  said the object existed and a disk that did not have it yet. A read that cannot
+  find its data locally now asks the holders that have it before giving up, and the
+  window scaled with object size: in a 3-node cluster under load, 64 KiB objects
+  missed on ~2% of reads and 4 MiB objects on 43%. This is also the desync behind
+  the rclone "object not found but it exists" reports in issue #40.
+- **A failed hop between cluster nodes is retried instead of becoming a
+  `502 Bad Gateway`.** A pooled connection the peer had already closed, a peer whose
+  accept queue was briefly full, or a pod restarting each surfaced directly to the
+  client as a 502 that succeeded on the caller's own retry. The forwarding proxy now
+  retries such a hop, and falls through to the object's other data holders, whenever
+  it failed before any response byte reached the client. A hop that fails midway
+  through a response is never replayed.
+- **Forwarded uploads are no longer cut off after 10 seconds.** An upload's response
+  headers arrive only once the whole body has been received and stored, so the read
+  path's `ResponseHeaderTimeout` acted as a rule that no forwarded `PUT` may take
+  longer than ten seconds; a large object, a slow client, or a busy peer became a 502.
+  Uploads now stream without a header timeout, while reads keep the fast-fail that
+  stops a hung node from parking a client.
+- **Inter-node calls now share one pooled HTTP transport.** Metadata writes forwarded
+  to the leader, replica data pushes, delete reaps and health probes each built their
+  own client and so fell back to the default pool of 2 idle connections per host,
+  opening and closing a TCP connection for most calls. A 3-node cluster doing 255
+  writes/s left ~1180 sockets in `TIME_WAIT` against 55 established; that churn
+  exhausts ephemeral ports and conntrack entries, which is what makes a gateway's
+  connections to a busy pod fail and reset for no visible reason. Measured at 0 after
+  the change.
+- **A node that cannot serve a request now answers `503 SlowDown` with an S3 error
+  document** instead of a plain-text `502`. The condition is temporary, and 503 is
+  both the S3 idiom for "retry" and something every mainstream SDK retries on its
+  own, where a 502 reached users as an unexplained "Bad Gateway". An object whose
+  holder is unreachable is likewise reported as temporarily unavailable rather than
+  not-found, which is a wrong answer a client cannot recover from.
+
+### Changed
+- **The Helm chart now defaults to the current image.** `appVersion` had been left at
+  `4.2.17`, so `helm install` without an explicit `image.tag` deployed a build from
+  well before the recent cluster fixes. It now tracks the release (chart `0.1.1`).
+  Pinning `image.tag` yourself is still recommended for reproducible deploys.
+
+Measured on a 3-node Raft cluster behind an nginx gateway, running the reported
+workload (list-then-write-then-read, 10,000 writes, 40 concurrent clients):
+111 disrupted operations before, 0 after. With a pod restarted mid-run: 62 before,
+3 after, and all three of those were the test gateway routing to the stopped pod.
+
 ## [4.4.40] - 2026-07-28
 ### Security
 - **Dashboard dependencies updated: `react-router`/`react-router-dom` 7.17.0 → 7.18.1
@@ -1095,7 +1146,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...HEAD
+[4.4.41]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...v4.4.41
 [4.4.40]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...v4.4.40
 [4.4.39]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...v4.4.39
 [4.4.38]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.37...v4.4.38

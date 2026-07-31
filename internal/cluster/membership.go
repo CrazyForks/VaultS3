@@ -191,7 +191,7 @@ func (n *Node) LeaveHandler() http.HandlerFunc {
 func (n *Node) AutoJoin(ctx context.Context, joinAddr string) {
 	selfAddr := fmt.Sprintf("%s:%d", n.cfg.BindAddr, n.cfg.RaftPort)
 	body, _ := json.Marshal(map[string]string{"node_id": n.cfg.NodeID, "addr": selfAddr})
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := InterNodeClient(5 * time.Second)
 	backoff := time.Second
 
 	// Announce our current address to the leader exactly once-successfully. We do
@@ -266,7 +266,7 @@ func (n *Node) ForwardToLeader(data []byte) error {
 	if n.cfg.Secret != "" {
 		req.Header.Set(clusterSecretHeader, n.cfg.Secret)
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := InterNodeClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("cluster: forward to leader: %w", err)
 	}

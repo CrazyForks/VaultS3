@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -52,23 +51,18 @@ import (
 var Version = "dev"
 
 // reapClient issues the best-effort inter-node object-delete broadcasts (issue
-// #34 layer 2). Inter-node TLS is commonly self-signed, so verification is
-// skipped for these internal, cluster-secret-authenticated calls.
-var reapClient = &http.Client{
-	Timeout:   10 * time.Second,
-	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-}
+// #34 layer 2), and replClient streams object data to replica-set peers (issue
+// #37, replica_count > 1). Both share the pooled inter-node transport so they
+// reuse connections instead of opening one per call: at cluster write rates that
+// churn is what starves a node of ephemeral ports and makes connects to it fail
+// intermittently (issue #42).
+//
+// replClient takes no overall timeout, because that would cap the whole request
+// including the body and so break large objects; its setup is bounded by the
+// shared transport's dial timeout.
+var reapClient = cluster.InterNodeClient(10 * time.Second)
 
-// replClient streams object data to replica-set peers (issue #37, replica_count >
-// 1). No overall timeout — it caps the whole request including the body, which
-// would break large objects — only dial/response-header bounds.
-var replClient = &http.Client{
-	Transport: &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		ResponseHeaderTimeout: 30 * time.Second,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-	},
-}
+var replClient = cluster.InterNodeClient(0)
 
 // clusterControllerAdapter adapts *cluster.Node to api.ClusterController so the
 // admin API can drive membership without importing internal/cluster's raft types.
@@ -506,6 +500,9 @@ func New(cfg *config.Config) (*Server, error) {
 			}
 			return failoverProxy.ForwardWithRetry(w, r, bucket, key)
 		})
+		// Last resort for a read whose metadata is here but whose data has not been
+		// replicated to this node yet (issue #42).
+		s3h.SetDataHolderFallback(failoverProxy.ForwardToDataHolder)
 	} else if clusterProxy != nil {
 		s3h.SetClusterProxy(func(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
 			if requiresLeaderRead(r, bucket, key) {
