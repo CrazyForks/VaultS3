@@ -3,7 +3,9 @@ package api
 import (
 	"crypto/hmac"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -48,17 +50,28 @@ func (h *APIHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, loginResponse{Token: token})
 }
 
-func (h *APIHandler) handleMe(w http.ResponseWriter, _ *http.Request) {
-	// Mask access key — only show first 4 and last 4 chars
-	ak := h.cfg.Auth.AdminAccessKey
-	masked := ak
-	if len(ak) > 8 {
-		masked = ak[:4] + strings.Repeat("*", len(ak)-8) + ak[len(ak)-4:]
+func (h *APIHandler) handleMe(w http.ResponseWriter, r *http.Request) {
+	// Report whoever this session actually belongs to. It used to answer "admin"
+	// for everyone, so a user signed in through SSO saw themselves as the admin
+	// account and was shown its (masked) access key. Authorization was never
+	// affected — that is keyed on the JWT subject — but the answer was wrong.
+	user, err := h.authenticateUser(r)
+	if err != nil || user == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
 	}
-	writeJSON(w, http.StatusOK, meResponse{
-		User:      "admin",
-		AccessKey: masked,
-	})
+
+	resp := meResponse{User: user}
+	if user == "admin" {
+		// Mask access key — only show first 4 and last 4 chars
+		ak := h.cfg.Auth.AdminAccessKey
+		masked := ak
+		if len(ak) > 8 {
+			masked = ak[:4] + strings.Repeat("*", len(ak)-8) + ak[len(ak)-4:]
+		}
+		resp.AccessKey = masked
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type oidcLoginRequest struct {
@@ -89,6 +102,12 @@ func (h *APIHandler) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.issueOIDCSession(w, claims)
+}
+
+// issueOIDCSession turns validated ID-token claims into a dashboard session,
+// provisioning the IAM user when auto-create is on. Shared by both OAuth flows.
+func (h *APIHandler) issueOIDCSession(w http.ResponseWriter, claims *OIDCClaims) {
 	userName := claims.Email
 	if userName == "" {
 		userName = claims.Sub
@@ -101,8 +120,7 @@ func (h *APIHandler) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up or auto-create IAM user
-	_, err = h.store.GetIAMUser(userName)
-	if err != nil {
+	if _, err := h.store.GetIAMUser(userName); err != nil {
 		if !h.cfg.OIDC.AutoCreateUsers {
 			writeError(w, http.StatusForbidden, "user not found and auto-create disabled")
 			return
@@ -139,6 +157,108 @@ func (h *APIHandler) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// OIDCFlow reports the OAuth flow in use, for startup logging.
+func (h *APIHandler) OIDCFlow() string { return h.oidcFlow() }
+
+// oidcFlow decides which OAuth flow the dashboard drives: the operator's choice
+// when they pinned one, otherwise the authorization-code flow whenever the
+// provider advertises it, falling back to implicit only when it does not.
+func (h *APIHandler) oidcFlow() string {
+	switch strings.ToLower(h.cfg.OIDC.Flow) {
+	case "code":
+		return "code"
+	case "implicit":
+		return "implicit"
+	}
+	if h.oidc != nil && h.oidc.SupportsCodeFlow() {
+		return "code"
+	}
+	return "implicit"
+}
+
+type oidcStartRequest struct {
+	RedirectURI string `json:"redirectUri"`
+}
+
+type oidcCallbackRequest struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+// handleOIDCStart begins an authorization-code login and returns the URL the
+// browser should open. The PKCE verifier and nonce are generated here and sealed
+// into the state, so neither is ever exposed to the page (issue #44).
+func (h *APIHandler) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
+	if h.oidc == nil {
+		writeError(w, http.StatusNotFound, "OIDC not configured")
+		return
+	}
+	var req oidcStartRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := validateOIDCRedirectURI(req.RedirectURI, r); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	authURL, err := h.oidc.StartLogin(req.RedirectURI)
+	if err != nil {
+		slog.Warn("oidc: cannot start code-flow login", "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"authorizeUrl": authURL})
+}
+
+// handleOIDCCallback redeems the authorization code the provider handed back.
+func (h *APIHandler) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if h.oidc == nil {
+		writeError(w, http.StatusNotFound, "OIDC not configured")
+		return
+	}
+	var req oidcCallbackRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Code == "" || req.State == "" {
+		writeError(w, http.StatusBadRequest, "code and state are required")
+		return
+	}
+
+	claims, err := h.oidc.CompleteLogin(req.Code, req.State)
+	if err != nil {
+		// Log the provider's reason (wrong secret, redirect URI mismatch, expired
+		// code); tell the browser only that the login failed.
+		slog.Warn("oidc: code exchange failed", "error", err)
+		writeError(w, http.StatusUnauthorized, "sign-in could not be completed")
+		return
+	}
+	h.issueOIDCSession(w, claims)
+}
+
+// validateOIDCRedirectURI keeps the callback pointed at this dashboard. The
+// provider checks it against its own registered list too, but this stops us
+// building a login URL that sends users somewhere else entirely.
+func validateOIDCRedirectURI(raw string, r *http.Request) error {
+	if raw == "" {
+		return fmt.Errorf("redirectUri is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("redirectUri is not a valid URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("redirectUri must be http or https")
+	}
+	if !strings.EqualFold(u.Host, r.Host) {
+		return fmt.Errorf("redirectUri must point at this server")
+	}
+	return nil
+}
+
 func (h *APIHandler) handleOIDCConfig(w http.ResponseWriter, _ *http.Request) {
 	enabled := h.oidc != nil
 	resp := map[string]interface{}{
@@ -147,6 +267,17 @@ func (h *APIHandler) handleOIDCConfig(w http.ResponseWriter, _ *http.Request) {
 	if enabled {
 		resp["issuerUrl"] = h.cfg.OIDC.IssuerURL
 		resp["clientId"] = h.cfg.OIDC.ClientID
+		// Where the browser must send the user to log in. Discovered from the
+		// provider rather than built from the issuer, because the two are
+		// unrelated paths on Authentik, Keycloak and Auth0 (issue #44).
+		resp["authorizeUrl"] = h.oidc.AuthorizeURL()
+		// Which OAuth flow the dashboard should drive. "code" is the modern one and
+		// the only one Authentik and Keycloak enable by default; "implicit" remains
+		// for providers that offer nothing else.
+		resp["flow"] = h.oidcFlow()
+		// Only the scopes this provider actually accepts. The implicit path builds
+		// its own URL in the browser and must not guess (issue #44).
+		resp["scope"] = h.oidc.Scopes()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

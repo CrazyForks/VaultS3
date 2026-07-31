@@ -900,8 +900,19 @@ func (s *Server) Run() error {
 			if err != nil {
 				slog.Warn("OIDC setup failed", "error", err)
 			} else {
+				oidcValidator.SetClientSecret(s.cfg.OIDC.ClientSecret)
+				oidcValidator.SetScopes(s.cfg.OIDC.Scopes)
+				// Seal login state with a key every node derives identically, so a
+				// login started on one node can finish on another behind a load
+				// balancer.
+				oidcValidator.SetStateKey(s.cfg.Auth.AdminSecretKey)
 				apiHandler.SetOIDCValidator(oidcValidator)
-				slog.Info("OIDC enabled", "issuer", s.cfg.OIDC.IssuerURL)
+				slog.Info("OIDC enabled",
+					"issuer", s.cfg.OIDC.IssuerURL,
+					"flow", apiHandler.OIDCFlow(),
+					"confidential_client", s.cfg.OIDC.ClientSecret != "",
+					"scopes", oidcValidator.Scopes(),
+				)
 			}
 		}
 	}

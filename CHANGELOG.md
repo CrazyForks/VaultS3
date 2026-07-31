@@ -6,6 +6,59 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.43] - 2026-07-31
+### Added
+- **SSO now uses the authorization-code flow with PKCE** (issue #44). VaultS3 only
+  supported the implicit flow, which returns the token through the browser's URL,
+  is deprecated by OAuth 2.1, and has to be explicitly turned on for a client on
+  both Keycloak and Authentik — so on a normally configured provider the login had
+  no way to complete. The flow is now chosen from the provider's discovery document,
+  so a provider that only offers implicit keeps working; pin it with
+  `oidc.flow: code|implicit` if you need to.
+  - The PKCE verifier, the nonce and the client secret stay on the server. The
+    browser only ever carries a code and a state sealed with AES-GCM, so a login
+    started on one cluster node can be completed on another.
+  - New `oidc.client_secret` (env: `VAULTS3_OIDC_CLIENT_SECRET`) for confidential
+    clients, which is the default client type on both providers. Leave it empty for
+    a public client authenticated by PKCE alone.
+  - Verified by signing in end to end against a real **Keycloak 26** and a real
+    **Authentik 2024.10** in Docker: a real user typing a real password through each
+    provider's own login flow, then the back-channel token exchange. On both, the
+    URL the old code built returns 404.
+
+### Fixed
+- **SSO login now works with providers that serve a global authorize endpoint**
+  (issue #44, reported by makayel). The dashboard built the login URL by appending
+  `/authorize` to the configured `issuer_url`. Authentik, Keycloak and Auth0 all give
+  each application its own issuer while serving authorization at one shared path, so
+  the button opened a URL that does not exist: an issuer of
+  `https://idp/application/o/my-app` produced `.../my-app/authorize`, a 404, and the
+  login never started. The authorization endpoint is now taken from the provider's
+  OpenID Connect discovery document, which is where it is published. Providers that
+  omit it fall back to the previous `{issuer}/authorize`, so existing deployments are
+  unaffected.
+- **An ID token whose issuer differs only by a trailing slash is no longer rejected.**
+  Authentik publishes its issuer as `.../my-app/` while an operator naturally
+  configures it without the slash, and the exact string comparison failed every token
+  with `invalid issuer` — the error waiting immediately behind the one above. The
+  issuer is now taken from the discovery document and compared ignoring a trailing
+  slash. A token from a genuinely different issuer is still rejected, and a discovery
+  document whose issuer does not match the configured one is ignored with a warning
+  rather than trusted.
+- **The requested scopes are negotiated with the provider instead of hardcoded.**
+  VaultS3 always asked for `openid email profile groups`, and a provider that does
+  not define a `groups` scope rejects the whole request: a stock Keycloak answers
+  `error=invalid_scope, Invalid scopes: openid email profile groups` and never shows
+  a login page. Only scopes the provider advertises in `scopes_supported` are now
+  requested, so group-to-policy mapping still works where groups exist and login no
+  longer fails where they do not. Pin them with `oidc.scopes` if your provider needs
+  a specific set.
+- **`GET /api/v1/auth/me` reports the signed-in user rather than always "admin".**
+  A user signed in through SSO saw themselves as the admin account and was shown its
+  masked access key. Authorization was never affected — that is keyed on the token's
+  subject, so an SSO user was never granted admin rights — but the answer was wrong
+  and the access key should not have been shown to them.
+
 ## [4.4.42] - 2026-07-31
 ### Fixed
 - **The dashboard's cluster capacity panel no longer multiplies logical storage usage
@@ -1165,7 +1218,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...HEAD
+[4.4.43]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...v4.4.43
 [4.4.42]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...v4.4.42
 [4.4.41]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...v4.4.41
 [4.4.40]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...v4.4.40

@@ -18,7 +18,7 @@ replicaCount: 1
 
 image:
   repository: eniz1806/vaults3
-  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.42")
+  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.43")
   # for reproducible deploys; "latest" follows main.
   tag: ""
   pullPolicy: IfNotPresent

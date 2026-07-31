@@ -1,6 +1,12 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import { createElement } from 'react'
-import { login as apiLogin, oidcLogin as apiOIDCLogin, getMe, type MeResponse } from '../api/auth'
+import {
+  login as apiLogin,
+  oidcLogin as apiOIDCLogin,
+  completeOIDCLogin as apiOIDCComplete,
+  getMe,
+  type MeResponse,
+} from '../api/auth'
 import { getToken, setToken, clearToken } from '../api/client'
 
 interface AuthContextType {
@@ -10,6 +16,7 @@ interface AuthContextType {
   isLoading: boolean
   login: (accessKey: string, secretKey: string, remember?: boolean) => Promise<void>
   loginWithOIDC: (idToken: string) => Promise<void>
+  loginWithOIDCCode: (code: string, state: string) => Promise<void>
   logout: () => void
 }
 
@@ -48,6 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me)
   }, [])
 
+  // Authorization-code flow: the server redeems the code, so the page only ever
+  // handles the code and the sealed state, never a token or the PKCE verifier.
+  const loginWithOIDCCode = useCallback(async (code: string, state: string) => {
+    const res = await apiOIDCComplete(code, state)
+    setToken(res.token, true)
+    setTokenState(res.token)
+    const me = await getMe()
+    setUser(me)
+  }, [])
+
   const logout = useCallback(() => {
     clearToken()
     setTokenState(null)
@@ -55,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return createElement(AuthContext.Provider, {
-    value: { token, user, isAuthenticated: !!token && !!user, isLoading, login, loginWithOIDC, logout },
+    value: { token, user, isAuthenticated: !!token && !!user, isLoading, login, loginWithOIDC, loginWithOIDCCode, logout },
     children,
   })
 }

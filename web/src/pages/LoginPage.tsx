@@ -3,7 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { DASHBOARD_BASE } from '../basePath'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
-import { getOIDCConfig, type OIDCConfigResponse } from '../api/auth'
+import {
+  buildOIDCAuthorizeUrl,
+  getOIDCConfig,
+  startOIDCLogin,
+  type OIDCConfigResponse,
+} from '../api/auth'
 import { getRememberedAccessKey, setRememberedAccessKey } from '../api/client'
 
 export default function LoginPage() {
@@ -15,7 +20,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [oidcConfig, setOidcConfig] = useState<OIDCConfigResponse | null>(null)
-  const { login, loginWithOIDC } = useAuth()
+  const { login, loginWithOIDC, loginWithOIDCCode } = useAuth()
   const { theme, toggle } = useTheme()
   const navigate = useNavigate()
 
@@ -25,22 +30,30 @@ export default function LoginPage() {
 
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
-      if (event.data?.type === 'oidc-callback' && event.data.idToken) {
-        setLoading(true)
-        setError('')
-        try {
+      if (event.origin !== window.location.origin) return
+      if (event.data?.type !== 'oidc-callback') return
+
+      setLoading(true)
+      setError('')
+      try {
+        if (event.data.code) {
+          // Code flow: hand the code to the server, which redeems it.
+          await loginWithOIDCCode(event.data.code, event.data.state)
+        } else if (event.data.idToken) {
           await loginWithOIDC(event.data.idToken)
-          navigate('/buckets', { replace: true })
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'SSO login failed')
-        } finally {
-          setLoading(false)
+        } else {
+          throw new Error(event.data.error || 'SSO login failed')
         }
+        navigate('/buckets', { replace: true })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'SSO login failed')
+      } finally {
+        setLoading(false)
       }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [loginWithOIDC, navigate])
+  }, [loginWithOIDC, loginWithOIDCCode, navigate])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -59,18 +72,29 @@ export default function LoginPage() {
     }
   }
 
-  const handleSSOLogin = () => {
+  const handleSSOLogin = async () => {
     if (!oidcConfig?.issuerUrl || !oidcConfig?.clientId) return
-    const nonce = Math.random().toString(36).substring(2)
     const redirectUri = `${window.location.origin}${DASHBOARD_BASE}/oidc-callback`
-    const authUrl = `${oidcConfig.issuerUrl}/authorize?` +
-      `response_type=id_token` +
-      `&client_id=${encodeURIComponent(oidcConfig.clientId)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&scope=openid%20email%20profile%20groups` +
-      `&nonce=${nonce}` +
-      `&response_mode=fragment`
-    window.open(authUrl, 'oidc-login', 'width=500,height=600,menubar=no,toolbar=no')
+    const popup = (url: string) =>
+      window.open(url, 'oidc-login', 'width=500,height=600,menubar=no,toolbar=no')
+
+    // Authorization code flow: the server builds the URL, keeping the PKCE
+    // verifier and nonce off the page entirely.
+    if (oidcConfig.flow !== 'implicit') {
+      setError('')
+      try {
+        const { authorizeUrl } = await startOIDCLogin(redirectUri)
+        popup(authorizeUrl)
+        return
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not start SSO login')
+        return
+      }
+    }
+
+    // Legacy implicit flow, for providers that support nothing newer.
+    const nonce = Math.random().toString(36).substring(2)
+    popup(buildOIDCAuthorizeUrl(oidcConfig, redirectUri, nonce))
   }
 
   return (

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -17,15 +18,17 @@ import (
 
 // OIDCClaims represents decoded claims from an OIDC ID token.
 type OIDCClaims struct {
-	Iss    string      `json:"iss"`
-	Sub    string      `json:"sub"`
-	Aud    interface{} `json:"aud"` // string or []string
-	Exp    int64       `json:"exp"`
-	Iat    int64       `json:"iat"`
-	Email  string      `json:"email"`
-	Name   string      `json:"name"`
-	Groups []string    `json:"groups"`
-	HD     string      `json:"hd"` // Google hosted domain
+	Iss   string      `json:"iss"`
+	Sub   string      `json:"sub"`
+	Aud   interface{} `json:"aud"` // string or []string
+	Exp   int64       `json:"exp"`
+	Iat   int64       `json:"iat"`
+	Email string      `json:"email"`
+	Name  string      `json:"name"`
+	// Nonce ties an ID token to the specific login request that asked for it.
+	Nonce  string   `json:"nonce"`
+	Groups []string `json:"groups"`
+	HD     string   `json:"hd"` // Google hosted domain
 }
 
 // Audiences returns the audience claim as a string slice.
@@ -65,8 +68,16 @@ type jwksResponse struct {
 }
 
 type openidConfig struct {
-	Issuer  string `json:"issuer"`
-	JWKSURI string `json:"jwks_uri"`
+	Issuer                     string   `json:"issuer"`
+	JWKSURI                    string   `json:"jwks_uri"`
+	AuthorizationEndpoint      string   `json:"authorization_endpoint"`
+	TokenEndpoint              string   `json:"token_endpoint"`
+	ResponseTypesSupported     []string `json:"response_types_supported"`
+	CodeChallengeMethods       []string `json:"code_challenge_methods_supported"`
+	ScopesSupported            []string `json:"scopes_supported"`
+	TokenEndpointAuthMethods   []string `json:"token_endpoint_auth_methods_supported"`
+	GrantTypesSupported        []string `json:"grant_types_supported"`
+	IDTokenSigningAlgSupported []string `json:"id_token_signing_alg_values_supported"`
 }
 
 // OIDCValidator validates OIDC ID tokens using JWKS.
@@ -75,11 +86,38 @@ type OIDCValidator struct {
 	clientID       string
 	allowedDomains []string
 	jwksURI        string
-	keys           map[string]*rsa.PublicKey
-	keysMu         sync.RWMutex
-	lastFetch      time.Time
-	cacheDuration  time.Duration
-	httpClient     *http.Client
+	// authorizeURL is the provider's authorization_endpoint as published in its
+	// discovery document. It cannot be derived from the issuer: Authentik,
+	// Keycloak and Auth0 all serve authorization at a global path while giving
+	// each application its own issuer, so appending "/authorize" to the issuer
+	// produced a URL that 404s and the login never started (issue #44).
+	authorizeURL string
+	// tokenIssuer is the issuer to expect in ID tokens, taken from the discovery
+	// document, which is authoritative for it.
+	tokenIssuer string
+	// tokenURL is the provider's token_endpoint, where an authorization code is
+	// redeemed for an ID token over a back channel.
+	tokenURL string
+	// supportsCode and supportsPKCE record what the provider advertises, so the
+	// modern flow is used wherever it is available without the operator having to
+	// know which flows their provider allows.
+	supportsCode bool
+	supportsPKCE bool
+	// scopesSupported is what the provider says it will accept, and configuredScopes
+	// is an operator override. Asking for a scope a provider does not know is a
+	// hard failure, not a degradation: stock Keycloak answers a request for
+	// "groups" with invalid_scope and refuses the login outright.
+	scopesSupported  []string
+	configuredScopes []string
+	// clientSecret authenticates the token exchange for a confidential client.
+	// Empty means a public client relying on PKCE alone.
+	clientSecret  string
+	stateKey      []byte // seals the login state that round-trips through the browser
+	keys          map[string]*rsa.PublicKey
+	keysMu        sync.RWMutex
+	lastFetch     time.Time
+	cacheDuration time.Duration
+	httpClient    *http.Client
 }
 
 // NewOIDCValidator creates a validator and fetches the discovery document.
@@ -131,7 +169,48 @@ func (v *OIDCValidator) fetchDiscovery() error {
 	}
 
 	v.jwksURI = cfg.JWKSURI
+	v.authorizeURL = cfg.AuthorizationEndpoint
+	v.tokenURL = cfg.TokenEndpoint
+	v.supportsCode = cfg.TokenEndpoint != "" && containsFold(cfg.ResponseTypesSupported, "code")
+	v.supportsPKCE = containsFold(cfg.CodeChallengeMethods, "S256")
+	v.scopesSupported = cfg.ScopesSupported
+
+	// Trust the discovery document for the issuer to expect in ID tokens. It is
+	// authoritative, and it commonly differs from the configured value by a
+	// trailing slash (Authentik publishes ".../application/o/my-app/" while an
+	// admin naturally configures it without the slash), which would otherwise
+	// fail every token as "invalid issuer" (issue #44).
+	//
+	// A discovery issuer that differs by more than that is out of spec and could
+	// point tokens at a different identity, so keep validating against what the
+	// operator configured and say so loudly instead.
+	v.tokenIssuer = v.issuerURL
+	if cfg.Issuer != "" {
+		if sameIssuer(cfg.Issuer, v.issuerURL) {
+			v.tokenIssuer = cfg.Issuer
+		} else {
+			slog.Warn("oidc: discovery document issuer does not match the configured issuer_url; validating tokens against the configured value",
+				"configured", v.issuerURL, "discovery", cfg.Issuer)
+		}
+	}
 	return nil
+}
+
+// sameIssuer compares two issuer URLs ignoring a trailing slash, which carries no
+// meaning here but is written inconsistently by providers and operators alike.
+func sameIssuer(a, b string) bool {
+	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+}
+
+// AuthorizeURL is where the browser should start the login, taken from the
+// provider's discovery document. Falls back to the conventional
+// "{issuer}/authorize" only when a provider publishes no authorization_endpoint,
+// so a non-compliant provider behaves exactly as it did before (issue #44).
+func (v *OIDCValidator) AuthorizeURL() string {
+	if v.authorizeURL != "" {
+		return v.authorizeURL
+	}
+	return v.issuerURL + "/authorize"
 }
 
 func (v *OIDCValidator) refreshKeys() error {
@@ -271,8 +350,9 @@ func (v *OIDCValidator) ValidateToken(idToken string) (*OIDCClaims, error) {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 
-	// Validate issuer
-	if claims.Iss != v.issuerURL {
+	// Validate issuer against the value the provider publishes for itself, and
+	// treat a trailing slash as insignificant (issue #44).
+	if !sameIssuer(claims.Iss, v.tokenIssuer) {
 		return nil, fmt.Errorf("invalid issuer: %s", claims.Iss)
 	}
 

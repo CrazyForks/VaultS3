@@ -204,6 +204,14 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleOIDCConfig(w, r)
 		return
 	}
+	if path == "/auth/oidc/start" && r.Method == http.MethodPost {
+		h.handleOIDCStart(w, r)
+		return
+	}
+	if path == "/auth/oidc/callback" && r.Method == http.MethodPost {
+		h.handleOIDCCallback(w, r)
+		return
+	}
 
 	// All other routes require JWT
 	if err := h.authenticate(r); err != nil {

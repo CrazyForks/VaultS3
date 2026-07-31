@@ -115,9 +115,24 @@ type MemoryConfig struct {
 }
 
 type OIDCConfig struct {
-	Enabled         bool              `yaml:"enabled"`
-	IssuerURL       string            `yaml:"issuer_url"`
-	ClientID        string            `yaml:"client_id"`
+	Enabled   bool   `yaml:"enabled"`
+	IssuerURL string `yaml:"issuer_url"`
+	ClientID  string `yaml:"client_id"`
+	// ClientSecret turns the dashboard into a confidential OAuth client. It is
+	// needed for the authorization-code flow on providers that issue one (the
+	// default for Authentik and Keycloak). The secret is only ever used
+	// server-side, in the back-channel token exchange, and is never sent to the
+	// browser. Leave empty for a public client, which authenticates with PKCE
+	// alone. (env: VAULTS3_OIDC_CLIENT_SECRET)
+	ClientSecret string `yaml:"client_secret"`
+	// Flow selects the OAuth flow: "code" (authorization code + PKCE, the modern
+	// default), "implicit" (legacy, deprecated by OAuth 2.1), or "" / "auto" to
+	// pick from what the provider advertises in its discovery document.
+	Flow string `yaml:"flow"`
+	// Scopes pins the OAuth scopes requested at login. Empty negotiates them from
+	// the provider's discovery document, which is what keeps a request for
+	// "groups" from failing outright on providers that do not define it.
+	Scopes          []string          `yaml:"scopes"`
 	AllowedDomains  []string          `yaml:"allowed_domains"`
 	RoleMapping     map[string]string `yaml:"role_mapping"`
 	AutoCreateUsers bool              `yaml:"auto_create_users"`
@@ -478,6 +493,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("VAULTS3_CONSOLE_ADDRESS"); v != "" {
 		cfg.Server.ConsoleAddress = v
+	}
+	// Kept out of the config file so the OAuth client secret can come from a
+	// Kubernetes Secret or a Docker secret rather than a mounted ConfigMap.
+	if v := os.Getenv("VAULTS3_OIDC_CLIENT_SECRET"); v != "" {
+		cfg.OIDC.ClientSecret = v
 	}
 	if v := os.Getenv("VAULTS3_ADDRESS"); v != "" {
 		cfg.Server.Address = v

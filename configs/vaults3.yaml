@@ -153,8 +153,25 @@ backup:
 
 oidc:
   enabled: false
-  issuer_url: ""           # OIDC provider URL (e.g. "https://accounts.google.com")
+  # OIDC provider URL (e.g. "https://accounts.google.com", or for Authentik
+  # "https://idp.example.com/application/o/my-app"). The authorization endpoint and
+  # JWKS URI are read from {issuer_url}/.well-known/openid-configuration, so a
+  # provider that serves them on other paths needs no extra configuration. A
+  # trailing slash here is optional.
+  issuer_url: ""
   client_id: ""            # OAuth2 client ID
+  # Client secret for a confidential client, which is the default client type on
+  # Authentik and Keycloak. Only ever used server-side, in the back-channel token
+  # exchange; never sent to the browser. Empty = public client (PKCE only).
+  # (env: VAULTS3_OIDC_CLIENT_SECRET — prefer that over writing it here)
+  client_secret: ""
+  # OAuth flow: "code" (authorization code + PKCE), "implicit" (legacy), or empty
+  # to pick whichever the provider advertises. Leave empty unless you must pin it.
+  flow: ""
+  # Scopes to request. Empty asks for the subset of openid/email/profile/groups the
+  # provider actually advertises: requesting a scope a provider does not define
+  # (e.g. "groups" on a stock Keycloak) makes it refuse the login outright.
+  scopes: []
   allowed_domains: []      # restrict to email domains (empty = allow all)
   role_mapping: {}         # map OIDC groups to VaultS3 policies
   auto_create_users: true  # auto-create IAM user on first OIDC login

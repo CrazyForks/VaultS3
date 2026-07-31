@@ -147,7 +147,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Backup scheduler**: Scheduled full/incremental backups to local directory targets with cron-like scheduling and backup history
 - **Git-like versioning**: Visual diff between object versions (text and binary), version tagging with labels, one-click rollback to any version
 - **FUSE mount**: Mount VaultS3 buckets as local filesystem directories with read/write support, lazy loading, and SigV4 authentication. LRU block cache (256KB blocks, configurable size), metadata cache with TTL, kernel attribute caching, and SigV4 derived key caching for fast repeated reads
-- **OIDC/JWT SSO**: Sign in to the dashboard with external identity providers (Google, Keycloak, Auth0) via OpenID Connect. RS256 JWT verification with JWKS auto-discovery and caching. Email domain filtering, auto-create users, OIDC group to policy mapping.
+- **OIDC/JWT SSO**: Sign in to the dashboard with external identity providers (Google, Keycloak, Auth0, Authentik) via OpenID Connect, using the **authorization-code flow with PKCE** (validated end-to-end against a real Keycloak and a real Authentik). The PKCE verifier, nonce and client secret never leave the server, and the login state is sealed so a login started on one cluster node can finish on another. The authorization endpoint, expected issuer and requested scopes all come from the provider's discovery document, so providers that serve a global authorization endpoint separate from each application's issuer need no rewrite rules, and a scope the provider does not define is never requested. RS256 JWT verification with JWKS auto-discovery and caching. Email domain filtering, auto-create users, OIDC group to policy mapping.
 - **Lambda compute triggers**: Webhook-based function triggers on S3 events. Call external URLs with event payload and optional object body, optionally store the response as a new object. Per-bucket trigger configuration with event type and key prefix/suffix filtering. Worker pool with non-blocking dispatch.
 - **SVG dashboard charts**: Pure SVG bar chart (per-bucket sizes), donut chart (request method distribution), and sparkline (request activity) on the stats page, zero dependencies
 - **GitHub Actions CI**: Automated build, test, lint, and coverage on push/PR
@@ -291,7 +291,8 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 | Version Rollback | `POST /api/v1/versions/rollback` | Done |
 | Rate Limit Status | `GET /api/v1/ratelimit/status` | Done |
 | OIDC Config | `GET /api/v1/auth/oidc/config` | Done |
-| OIDC Login | `POST /api/v1/auth/oidc` | Done |
+| OIDC Login (code flow) | `POST /api/v1/auth/oidc/start`, `POST /api/v1/auth/oidc/callback` | Done |
+| OIDC Login (implicit) | `POST /api/v1/auth/oidc` | Done |
 | Lambda Triggers | `PUT/GET/DELETE /{bucket}?lambda` | Done |
 | Lambda Trigger List | `GET /api/v1/lambda/triggers` | Done |
 | Lambda Trigger CRUD | `GET/PUT/DELETE /api/v1/lambda/triggers/{bucket}` | Done |
@@ -586,6 +587,7 @@ All settings can be overridden via environment variables (takes precedence over 
 | `VAULTS3_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `VAULTS3_TRACE_FORWARD` | Log per-hop latency (DNS/connect/reuse/TTFB) for proxied cluster reads | `0` |
 | `VAULTS3_TRACE_READS` | Log the cause (`meta_nil` vs `data_missing`) of cluster `GET`/`HEAD` 404s | `0` |
+| `VAULTS3_OIDC_CLIENT_SECRET` | OAuth client secret for SSO (keeps it out of the config file) | _(public client)_ |
 
 ### Storage requirements
 
@@ -1382,6 +1384,7 @@ VaultS3 is designed with security in mind:
 - **Backup scheduler thread safety**: Atomic bool prevents concurrent backup races
 - **OIDC admin name reservation**: OIDC users cannot claim the "admin" username
 - **OIDC domain validation enforcement**: Tokens without email are rejected when domain filtering is enabled
+- **OIDC code flow hardening**: The authorization code is redeemed server-side, so the ID token never travels through the browser. The PKCE verifier, nonce and client secret stay on the server; the CSRF state is sealed with AES-GCM and expires after 15 minutes, so it cannot be read, forged, or replayed from another deployment. The ID token's nonce is checked against the login that requested it
 - **CORS port restriction**: Localhost CORS only allowed on the server's own port
 - **Presigned URL credential isolation**: Presigned URLs use a dedicated non-admin key, preventing privilege escalation
 - **CORS Host header protection**: Origin validation uses configured server address, not attacker-controlled Host header
