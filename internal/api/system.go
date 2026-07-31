@@ -127,7 +127,6 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 	// Aggregate physical disk across reachable nodes (replicas legitimately use
 	// disk on multiple nodes, so this is the true "how full is the cluster").
 	var totalDisk sysinfo.Disk
-	var objectBytes, objectCount int64
 	reachable := 0
 	for _, n := range nodes {
 		if !n.Reachable {
@@ -137,9 +136,14 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 		totalDisk.TotalBytes += n.Disk.TotalBytes
 		totalDisk.UsedBytes += n.Disk.UsedBytes
 		totalDisk.FreeBytes += n.Disk.FreeBytes
-		objectBytes += n.ObjectBytes
-		objectCount += n.ObjectCount
 	}
+
+	// Logical usage is NOT summed. Object metadata is replicated by Raft, so every
+	// node reports the same cluster-wide totals, and adding them up multiplied the
+	// figure by the node count: a 12-node cluster holding 82.2 GB in 396k objects
+	// reported 986.4 GB in 4.75M objects, exactly 12x (issue #43). Take it from
+	// this node, which already has the whole picture.
+	objectBytes, objectCount := self.ObjectBytes, self.ObjectCount
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"clustered":      h.clusterSelfID != "",

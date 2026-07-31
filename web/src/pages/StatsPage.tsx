@@ -125,11 +125,18 @@ export default function StatsPage() {
             />
           </div>
           <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
-            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.usedBytes)}</span> used</span>
+            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.usedBytes)}</span> used on disk</span>
             <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.freeBytes)}</span> free</span>
             <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.totalBytes)}</span> total on disk</span>
             <span className="text-gray-400 dark:text-gray-500">{formatSize(ci.totals.objectBytes)} in {ci.totals.objectCount} object{ci.totals.objectCount !== 1 ? 's' : ''} (logical)</span>
           </div>
+          {/* The two figures above measure different things and are routinely far
+              apart, which reads as a bug when they sit side by side (issue #43). */}
+          <p className="mt-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
+            Disk usage is read from the filesystems backing the data directories, so it counts every
+            replica and erasure shard, non-current object versions, and anything else stored on those
+            disks. Logical size counts each object&apos;s current version once, cluster-wide.
+          </p>
 
           {ci.clustered && ci.nodeCount > 1 && (
             <div className="mt-3 border-t border-gray-100 dark:border-gray-700/50 pt-3 space-y-1.5">

@@ -6,6 +6,25 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.42] - 2026-07-31
+### Fixed
+- **The dashboard's cluster capacity panel no longer multiplies logical storage usage
+  by the node count** (issue #43, reported by kesavkolla). Object metadata is
+  replicated by Raft, so every node reports the same cluster-wide logical totals, and
+  the rollup added them up: a 12-node cluster holding 82.2 GB in 395,999 objects
+  reported 986.4 GB in 4,751,988 objects in the capacity panel, directly below the
+  card showing the correct figure — inflated by exactly 12x. Logical size is now
+  counted once, while physical disk is still summed across nodes, where replicas
+  genuinely do occupy separate disks.
+
+### Changed
+- **The capacity panel now says what its two numbers measure.** Disk usage is read from
+  the filesystems backing the data directories, so it counts every replica and erasure
+  shard, non-current object versions, in-progress multipart parts, and anything else
+  stored on those disks; logical size counts each object's current version once. The
+  two are routinely far apart, and side by side without explanation they read as a
+  contradiction rather than as answers to different questions.
+
 ## [4.4.41] - 2026-07-31
 ### Fixed
 - **A clustered `GET` no longer returns "not found" for an object that was just
@@ -1146,7 +1165,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...HEAD
+[4.4.42]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...v4.4.42
 [4.4.41]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.40...v4.4.41
 [4.4.40]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.39...v4.4.40
 [4.4.39]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.38...v4.4.39

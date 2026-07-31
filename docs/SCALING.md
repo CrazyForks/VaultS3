@@ -349,6 +349,20 @@ cluster:
 
 - **Cluster health:** `GET /cluster/status` → leader, member list, per-node suffrage.
 - **Node liveness:** `GET /health`.
+- **Capacity:** `GET /api/v1/cluster/info` → per-node and cluster totals. Expect the
+  disk figure to be much larger than the logical one, and read them as answers to
+  different questions:
+
+  | Figure | What it counts |
+  |--------|----------------|
+  | `totals.disk.usedBytes` | Used space on the **filesystems** backing the data directories, summed per node. Includes every replica (`replica_count` copies), erasure parity shards, non-current object versions, in-progress multipart parts, and any non-VaultS3 data sharing those disks. |
+  | `totals.objectBytes` | **Logical** size: each object's current version, counted once cluster-wide. Excludes replicas, parity, and old versions. |
+
+  So on a 3-replica cluster with versioning enabled, several times the logical size on
+  disk is expected. A ratio far beyond `replica_count` x erasure overhead usually means
+  accumulated non-current versions or abandoned multipart uploads — expire them with a
+  lifecycle rule (`noncurrent_version_expiration_days`, `max_noncurrent_versions`,
+  `abort_incomplete_multipart_days`).
 - **Metrics (Prometheus):** `GET /metrics`, watch for replication lag, heal activity, and
   per-node request distribution.
 - **Failure detection** is automatic: the detector marks a peer `suspect` after
