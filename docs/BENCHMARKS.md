@@ -78,6 +78,19 @@ docker stats --no-stream --format '{{.MemUsage}}' vaults3
 
 Capture RAM **while `warp` is running**, so the number reflects real load.
 
+**Object size and concurrency drive the peak, not the object count.** A steady
+workload of small objects sits near the idle figure; large objects at high
+concurrency are what set the ceiling, because each in-flight request holds
+buffers proportional to the part or object it is moving. Measure at the object
+size and concurrency you actually run, and size container limits from that number
+rather than from an idle reading.
+
+For scale, measured on a 3-pod cluster (`replica_count: 1`, zstd, 4 GiB per pod)
+with 64 MiB objects at 32 concurrent uploads: worst-pod peak was **3.3 GiB before
+4.4.48 (which OOM-killed a pod) and 2.7 GiB after**, when uploads stopped being
+buffered whole (issue #46). Comparing a memory number across versions is only
+meaningful with the same object size, concurrency and codec on both sides.
+
 ---
 
 ## 4. Results template

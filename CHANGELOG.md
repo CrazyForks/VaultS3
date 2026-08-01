@@ -6,6 +6,42 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.48] - 2026-08-01
+### Fixed
+- **Uploads no longer hold the whole object in memory**, which is what OOM-killed
+  pods under high-concurrency large-object load (issue #46, reported by
+  kesavkolla). A `PUT` was read fully into the handler to validate its checksums,
+  and with compression enabled the engine then held the plaintext and the
+  compressed copy as well, so peak memory scaled with **object size x
+  concurrency** rather than with concurrency alone.
+  - The body now streams to the storage engine while its digests are computed in
+    passing. Only the digests the request actually asks about are computed.
+  - Compression streams too, encoding as the object flows through instead of
+    buffering the plaintext and the result.
+  - Measured on a 4 GiB container with zstd compression, 64 MiB objects, 16
+    concurrent uploads: peak **3.9 GiB to 1.4 GiB** at c=8 and **6.1 GiB to 2.8
+    GiB** at c=16. The same run that OOM-killed the previous build (exit 137) now
+    completes with ~1.3 GiB to spare, and PUT throughput improved as a side effect.
+  - Validation now happens after the bytes are written rather than before, so a
+    rejected upload is deleted again. A bad checksum still returns exactly the
+    same `BadDigest` / `InvalidDigest` error, and the object never becomes
+    visible: metadata is written only after validation and metadata is
+    authoritative (issue #34).
+  - Two paths still buffer deliberately, because they cannot not: SSE-C seals an
+    object as a single AEAD message, and an upload with no declared length cannot
+    have its size recorded in the compression frame header.
+  - The zstd frame content size is still written on every object. Streaming reads
+    depend on it (issue #38) and would silently fall back to buffering the whole
+    object without it; a test now fails if it ever goes missing.
+
+### Changed
+- The scaling guide previously called large-object OOMKills "an operational
+  limit, not a server bug". That was wrong, and it now documents the real
+  per-request memory cost, what changed in 4.4.48, and which paths still buffer.
+- The benchmarking guide's memory section now says that object size and
+  concurrency set the peak, so a RAM figure measured with small objects is not
+  the number to size a container from.
+
 ## [4.4.47] - 2026-08-01
 ### Added
 - **VaultS3 now measures its own on-disk footprint**, so "how much are my objects
@@ -1363,7 +1399,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.48...HEAD
+[4.4.48]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...v4.4.48
 [4.4.47]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...v4.4.47
 [4.4.46]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...v4.4.46
 [4.4.45]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...v4.4.45

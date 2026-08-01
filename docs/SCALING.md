@@ -576,10 +576,22 @@ backup:
   already stored keep their layout, and reads handle both.
 - **Memory sizing.** A pod that is `OOMKilled` mid-benchmark takes its shard
   offline while it restarts (surfacing as `503 SlowDown` for keys only it holds,
-  once the retry against the other holders has also failed). Size per-pod memory for your workload —
-  large-object multipart and high concurrency need headroom well above a few GiB.
-  This is an operational limit, not a server bug: raise the pod memory limit until
-  OOMKills stop, then any residual errors are pure consistency (addressed above).
+  once the retry against the other holders has also failed).
+
+  Up to 4.4.47 a `PUT` was held whole in memory to validate it, and compression
+  added two more copies on top, so peak memory scaled with **object size x
+  concurrency**: 64 MiB objects at 16 concurrent uploads peaked at ~3.9 GiB and
+  OOM-killed a 4 GiB pod. **From 4.4.48 uploads stream**, and the same workload
+  peaks at ~1.4 GiB (issue #46). Digests are computed as the bytes flow past, so
+  nothing is retained to validate them.
+
+  Two paths still buffer a whole object by nature and should be sized for: SSE-C
+  (customer-key encryption seals the object as one message) and an upload whose
+  length is not declared up front (the compressor cannot record the frame size
+  without it). Multipart uploads are bounded by part size, not object size.
+
+  Size per-pod memory for concurrency x part/object size plus headroom. If OOMKills
+  persist after 4.4.48, that is worth reporting rather than only raising the limit.
 
 ## 10. Known limitations & caveats
 

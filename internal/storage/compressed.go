@@ -9,12 +9,33 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
 
 // zstdEncoder is reused across objects — EncodeAll is safe for concurrent use.
 var zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+
+// zstdWriters pools streaming encoders. Unlike EncodeAll, a streaming writer is
+// stateful and cannot be shared, and building one per object allocates its whole
+// compression window — exactly the per-request cost the streaming path exists to
+// avoid.
+var zstdWriters = sync.Pool{
+	New: func() any {
+		w, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		return w
+	},
+}
+
+func acquireZstdWriter() *zstd.Encoder { return zstdWriters.Get().(*zstd.Encoder) }
+
+// releaseZstdWriter returns an encoder to the pool with its reference to the
+// previous destination dropped, so a finished upload's pipe is not pinned alive.
+func releaseZstdWriter(e *zstd.Encoder) {
+	e.Reset(nil)
+	zstdWriters.Put(e)
+}
 
 // excludedExtensions lists file extensions that should NOT be compressed
 // because they are already compressed or would not benefit from compression.
@@ -65,7 +86,7 @@ func (c *CompressedEngine) PutObject(bucket, key string, reader io.Reader, size 
 	if IsDirMarker(key) || !c.shouldCompress(key) {
 		return c.inner.PutObject(bucket, key, reader, size)
 	}
-	return c.compressAndPut(reader, func(compressed io.Reader, compressedSize int64) (int64, string, error) {
+	return c.compressAndPut(reader, size, func(compressed io.Reader, compressedSize int64) (int64, string, error) {
 		return c.inner.PutObject(bucket, key, compressed, compressedSize)
 	})
 }
@@ -103,7 +124,7 @@ func (c *CompressedEngine) PutObjectVersion(bucket, key, versionID string, reade
 	if !c.shouldCompress(key) {
 		return c.inner.PutObjectVersion(bucket, key, versionID, reader, size)
 	}
-	return c.compressAndPut(reader, func(compressed io.Reader, compressedSize int64) (int64, string, error) {
+	return c.compressAndPut(reader, size, func(compressed io.Reader, compressedSize int64) (int64, string, error) {
 		return c.inner.PutObjectVersion(bucket, key, versionID, compressed, compressedSize)
 	})
 }
@@ -133,7 +154,68 @@ func (c *CompressedEngine) ObjectPath(bucket, key string) string {
 const maxCompressedSize int64 = 1 * 1024 * 1024 * 1024
 
 // compressAndPut reads all data, compresses it, computes ETag of original, writes compressed.
-func (c *CompressedEngine) compressAndPut(reader io.Reader, putFn func(io.Reader, int64) (int64, string, error)) (int64, string, error) {
+func (c *CompressedEngine) compressAndPut(reader io.Reader, size int64, putFn func(io.Reader, int64) (int64, string, error)) (int64, string, error) {
+	if size >= 0 && size <= maxCompressedSize {
+		return c.streamCompressAndPut(reader, size, putFn)
+	}
+	return c.bufferCompressAndPut(reader, putFn)
+}
+
+// streamCompressAndPut compresses as the object flows through, so a large upload
+// costs a window rather than two or three full copies of itself. Buffering here
+// (plaintext + compressed + the handler's own copy) was a large part of the peak
+// memory that OOM-killed nodes under concurrent 64 MiB uploads (issue #46).
+//
+// size must be the real plaintext length: it is written into the zstd frame
+// header as the content size, which is what lets reads stream instead of
+// materialising the whole object to learn how big it is (issue #38). Dropping it
+// would quietly undo that fix, so an unknown length uses the buffered path.
+func (c *CompressedEngine) streamCompressAndPut(reader io.Reader, size int64, putFn func(io.Reader, int64) (int64, string, error)) (int64, string, error) {
+	h := md5.New()
+	pr, pw := io.Pipe()
+
+	type encResult struct {
+		n   int64
+		err error
+	}
+	done := make(chan encResult, 1)
+
+	go func() {
+		enc := acquireZstdWriter()
+		// ResetContentSize records the frame content size the reader relies on.
+		enc.ResetContentSize(pw, size)
+		n, err := io.Copy(enc, io.TeeReader(reader, h))
+		if cerr := enc.Close(); err == nil {
+			err = cerr
+		}
+		releaseZstdWriter(enc)
+		// Closing the pipe with the error propagates a failed read or encode to
+		// the inner engine, which then abandons its partial write.
+		pw.CloseWithError(err)
+		done <- encResult{n: n, err: err}
+	}()
+
+	// The compressed length is not known ahead of the stream; the inner engine
+	// counts what it writes, and no engine requires the size up front.
+	_, _, putErr := putFn(pr, -1)
+	pr.CloseWithError(putErr)
+	res := <-done
+
+	if res.err != nil {
+		return 0, "", fmt.Errorf("compress: %w", res.err)
+	}
+	if putErr != nil {
+		return 0, "", putErr
+	}
+	if res.n > maxCompressedSize {
+		return 0, "", fmt.Errorf("object too large for compression (max %dMB)", maxCompressedSize/(1024*1024))
+	}
+	return res.n, fmt.Sprintf("\"%x\"", h.Sum(nil)), nil
+}
+
+// bufferCompressAndPut is the fallback for an upload whose length is not known
+// in advance, where the frame content size can only be learned by reading it all.
+func (c *CompressedEngine) bufferCompressAndPut(reader io.Reader, putFn func(io.Reader, int64) (int64, string, error)) (int64, string, error) {
 	plaintext, err := io.ReadAll(io.LimitReader(reader, maxCompressedSize+1))
 	if err != nil {
 		return 0, "", fmt.Errorf("read plaintext: %w", err)

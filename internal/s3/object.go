@@ -231,6 +231,73 @@ func detectContentType(r *http.Request, key string) string {
 	return ct
 }
 
+// settleUpload validates a streamed upload after its bytes have been written and
+// undoes the write if the client's promise was not kept.
+//
+// Streaming means validation can no longer happen before the write (issue #46),
+// so a rejected upload is removed here. No metadata has been stored at this
+// point, and metadata is authoritative (issue #34), so the object is invisible
+// either way; deleting the bytes keeps the disk honest as well. versionID is ""
+// for the non-versioned path.
+//
+// Returns false once it has written the error response, meaning the caller must
+// stop.
+func (h *ObjectHandler) settleUpload(w http.ResponseWriter, r *http.Request, bucket, key, versionID string, d *putDigests) (objectChecksums, bool) {
+	discard := func() {
+		var err error
+		if versionID != "" {
+			err = h.engine.DeleteObjectVersion(bucket, key, versionID)
+		} else {
+			err = h.engine.DeleteObject(bucket, key)
+		}
+		if err != nil {
+			// Not fatal: without metadata the bytes are unreachable over S3, and
+			// `vaults3-cli object verify` finds them. Say so rather than hide it.
+			slog.Warn("could not remove the data of a rejected upload; it has no metadata so it is not served, run `vaults3-cli object verify --repair` to reclaim it",
+				"bucket", bucket, "key", key, "version", versionID, "error", err)
+		}
+	}
+
+	sums, code, message, ok := d.verify(r)
+	if !ok {
+		discard()
+		status := http.StatusBadRequest
+		writeS3Error(w, code, message, status)
+		return sums, false
+	}
+
+	// The pre-write quota check used the declared Content-Length, which an
+	// aws-chunked client controls via X-Amz-Decoded-Content-Length. Re-check
+	// against the length that actually arrived so a bucket quota cannot be
+	// undercut by a false declared length.
+	if d.size() > r.ContentLength && !h.quotaAllowsAfterWrite(bucket) {
+		discard()
+		writeS3Error(w, "QuotaExceeded", "Maximum bucket size exceeded", http.StatusForbidden)
+		return sums, false
+	}
+	return sums, true
+}
+
+// quotaAllowsAfterWrite reports whether a bucket is still inside its limits once
+// a streamed upload has landed. It differs from checkQuota in being a post-write
+// check: the object is already counted in the engine's totals, so the comparison
+// is against the totals themselves rather than totals-plus-incoming. FIFO buckets
+// make room instead of rejecting, so they always pass.
+func (h *ObjectHandler) quotaAllowsAfterWrite(bucket string) bool {
+	info, err := h.store.GetBucket(bucket)
+	if err != nil || (info.MaxSizeBytes == 0 && info.MaxObjects == 0) || info.FIFOQuota {
+		return true
+	}
+	currentSize, currentCount, _ := h.engine.BucketSize(bucket)
+	if info.MaxObjects > 0 && currentCount > info.MaxObjects {
+		return false
+	}
+	if info.MaxSizeBytes > 0 && currentSize > info.MaxSizeBytes {
+		return false
+	}
+	return true
+}
+
 // PutObject handles PUT /{bucket}/{key}.
 func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	if !h.store.BucketExists(bucket) {
@@ -268,35 +335,6 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Read body for Content-MD5 and checksum validation
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeS3Error(w, "InternalError", "Failed to read request body", http.StatusInternalServerError)
-		return
-	}
-
-	// The pre-read quota check used the declared Content-Length, which an
-	// aws-chunked client controls via X-Amz-Decoded-Content-Length. Re-check
-	// against the real decoded size so a bucket quota cannot be undercut by a false
-	// declared length.
-	if int64(len(body)) > r.ContentLength {
-		if !h.checkQuota(w, bucket, int64(len(body))) {
-			return
-		}
-	}
-
-	// Validate Content-MD5 if present
-	if validateContentMD5(w, r.Header.Get("Content-MD5"), body) {
-		return
-	}
-
-	// Validate and compute S3 checksums
-	csha256, ccrc32, ccrc32c, csha1, checksumErr := checksumFromRequest(r, body)
-	if checksumErr != nil {
-		writeS3Error(w, "BadDigest", checksumErr.Error(), http.StatusBadRequest)
-		return
-	}
-
 	versioning, _ := h.store.GetBucketVersioning(bucket)
 	ct := detectContentType(r, key)
 	now := time.Now().UTC()
@@ -316,15 +354,29 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	// The body streams to the engine while its digests are computed in passing,
+	// so a large upload costs a copy buffer rather than its whole size in memory
+	// (issue #46). Validation therefore happens AFTER the bytes are written, and a
+	// rejected upload is undone below. That is safe because metadata is written
+	// only after validation and metadata is authoritative (issue #34): an object
+	// whose bytes exist without metadata is invisible to every API, and
+	// `vaults3-cli object verify` reports it.
+	digests := newPutDigests(r, r.Body)
+
 	if versioning == "Enabled" {
 		versionID := generateVersionID()
 
-		written, etag, err := h.engine.PutObjectVersion(bucket, key, versionID, bytes.NewReader(body), int64(len(body)))
+		written, etag, err := h.engine.PutObjectVersion(bucket, key, versionID, digests, r.ContentLength)
 		if err != nil {
 			slog.Error("internal error", "error", err)
 			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 			return
 		}
+		sums, ok := h.settleUpload(w, r, bucket, key, versionID, digests)
+		if !ok {
+			return
+		}
+		csha256, ccrc32, ccrc32c, csha1 := sums.SHA256, sums.CRC32, sums.CRC32C, sums.SHA1
 
 		// Mark previous latest as not latest
 		if oldMeta, err := h.store.GetObjectMeta(bucket, key); err == nil && oldMeta.VersionID != "" {
@@ -386,12 +438,17 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 
 	if versioning == "Suspended" {
 		// Suspended versioning: overwrite the "null" version
-		written, etag, err := h.engine.PutObjectVersion(bucket, key, "null", bytes.NewReader(body), int64(len(body)))
+		written, etag, err := h.engine.PutObjectVersion(bucket, key, "null", digests, r.ContentLength)
 		if err != nil {
 			slog.Error("internal error", "error", err)
 			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 			return
 		}
+		sums, ok := h.settleUpload(w, r, bucket, key, "null", digests)
+		if !ok {
+			return
+		}
+		csha256, ccrc32, ccrc32c, csha1 := sums.SHA256, sums.CRC32, sums.CRC32C, sums.SHA1
 
 		// Remove any existing null version
 		if oldMeta, err := h.store.GetObjectVersion(bucket, key, "null"); err == nil {
@@ -450,22 +507,40 @@ func (h *ObjectHandler) PutObject(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	// Non-versioned path
-	plainSize := int64(len(body))
+	// Non-versioned path.
+	var written int64
+	var etag string
+	var err error
+	var plainSize int64
 	if ssecKey != nil {
+		// SSE-C seals the object as one AEAD message, so this path genuinely needs
+		// the whole plaintext in memory and keeps buffering. It is opt-in and
+		// per-request, so it does not put the general large-object path at risk.
+		body, rerr := io.ReadAll(digests)
+		if rerr != nil {
+			writeS3Error(w, "InternalError", "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		plainSize = int64(len(body))
 		sealed, serr := ssecSeal(ssecKey, body)
 		if serr != nil {
 			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 			return
 		}
-		body = sealed
+		written, etag, err = h.engine.PutObject(bucket, key, bytes.NewReader(sealed), int64(len(sealed)))
+	} else {
+		written, etag, err = h.engine.PutObject(bucket, key, digests, r.ContentLength)
 	}
-	written, etag, err := h.engine.PutObject(bucket, key, bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		slog.Error("internal error", "error", err)
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 		return
 	}
+	sums, ok := h.settleUpload(w, r, bucket, key, "", digests)
+	if !ok {
+		return
+	}
+	csha256, ccrc32, ccrc32c, csha1 := sums.SHA256, sums.CRC32, sums.CRC32C, sums.SHA1
 	if ssecKey != nil {
 		written = plainSize // report the plaintext size, not the SSE-C ciphertext size
 	}

@@ -163,6 +163,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Dashboard API rate limiting**: Uses existing token bucket rate limiter on `/api/v1/` endpoints, returns 429 when exceeded
 - **Input validation**: DNS-compatible bucket name validation (3-63 chars, lowercase, no leading/trailing hyphen) and object key validation (max 1024 chars, no null bytes)
 - **RAM optimization**: Slim search index with LRU eviction cap (50K entries default), batched last-access updates (30s flush interval), configurable Go memory limit (`GOMEMLIMIT`)
+- **Streaming uploads**: A `PUT` streams to disk while its checksums are computed in passing, and compression encodes as the object flows through, so peak memory scales with concurrency rather than with concurrency multiplied by object size. A 64 MiB object at 32 concurrent uploads no longer costs gigabytes of buffered copies (SSE-C and uploads with no declared length still buffer by necessity)
 - **GetObjectAttributes**: Returns object size, ETag, and storage class. Used internally by AWS SDK v2
 - **Bucket encryption config**: Per-bucket server-side encryption configuration (AES256, aws:kms) via `PUT/GET/DELETE /{bucket}?encryption`
 - **Public access block**: Per-bucket public access block with 4 boolean flags (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets). `BlockPublicPolicy` and `RestrictPublicBuckets` are enforced: either one blocks anonymous access to the bucket regardless of its policy. The two ACL flags are accepted and stored for API compatibility but have no effect, since VaultS3 uses policies rather than ACLs (`PUT ?acl` is a no-op)
@@ -798,6 +799,8 @@ compression:
 ```
 
 All objects are transparently compressed (zstd) on write and decompressed on read. Objects written by older gzip builds are still read correctly. Works with encryption (data is compressed then encrypted on disk).
+
+Both directions stream, so a large object costs a compression window rather than a copy of itself: peak memory scales with concurrency, not with concurrency multiplied by object size. An upload that does not declare its length falls back to buffering, because the decompressed size has to be recorded in the frame header for reads to stream.
 
 ### Small-file packing (experimental)
 
