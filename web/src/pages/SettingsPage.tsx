@@ -79,6 +79,12 @@ export default function SettingsPage() {
         <Section title={t('settings.storage')}>
           <Row label={t('settings.dataDirectory')} value={settings.storage.dataDir} mono />
           <Row label={t('settings.metadataDirectory')} value={settings.storage.metadataDir} mono />
+          <Row
+            label={t('settings.usageScan')}
+            value={settings.storage.usageScanIntervalSecs > 0
+              ? `${settings.storage.usageScanIntervalSecs}s`
+              : t('common.disabled')}
+          />
         </Section>
 
         {/* Features */}

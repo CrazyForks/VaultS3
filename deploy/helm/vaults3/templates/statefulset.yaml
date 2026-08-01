@@ -97,6 +97,10 @@ spec:
             - name: VAULTS3_DEFAULT_BUCKETS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- if ne (int .Values.usageScanIntervalSecs) 300 }}
+            - name: VAULTS3_USAGE_SCAN_INTERVAL_SECS
+              value: {{ .Values.usageScanIntervalSecs | quote }}
+            {{- end }}
             {{- if .Values.cluster.enabled }}
             - name: POD_IP
               valueFrom:

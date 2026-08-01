@@ -132,6 +132,10 @@ spec:
             # container is needed. Existing buckets are left untouched.
             # - name: VAULTS3_DEFAULT_BUCKETS
             #   value: "app-data,backups"
+            # How often VaultS3 may re-measure its own on-disk footprint, which the
+            # dashboard shows separately from the volume's total usage. 0 disables it.
+            # - name: VAULTS3_USAGE_SCAN_INTERVAL_SECS
+            #   value: "300"
           livenessProbe:
             httpGet:
               path: /health

@@ -18,7 +18,7 @@ replicaCount: 1
 
 image:
   repository: eniz1806/vaults3
-  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.46")
+  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.47")
   # for reproducible deploys; "latest" follows main.
   tag: ""
   pullPolicy: IfNotPresent
@@ -68,6 +68,13 @@ config: |
 defaultBuckets: []
   # - app-data
   # - backups
+
+# How often, at most, VaultS3 re-measures its own on-disk footprint by walking its
+# data directories. That is what lets the dashboard and `vaults3-cli info` separate
+# "VaultS3 is using this much" from the node's total filesystem usage, which on a
+# shared volume also counts the OS, container images and logs. The walk is
+# background-only and on demand. Set to 0 to switch it off on very large volumes.
+usageScanIntervalSecs: 300
 
 service:
   type: ClusterIP

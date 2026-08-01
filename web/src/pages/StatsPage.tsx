@@ -95,7 +95,7 @@ export default function StatsPage() {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
             </span>
           )}
-          Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
+          {t('stats.autoRefresh')} {autoRefresh ? t('stats.on') : t('stats.off')}
         </button>
       </div>
 
@@ -107,38 +107,100 @@ export default function StatsPage() {
         <StatCard label={t('stats.uptime')} value={formatUptime(stats.uptimeSeconds)} />
       </div>
 
-      {/* Disk capacity (cluster-wide totals when clustered) */}
+      {/* Storage (cluster-wide totals when clustered). Three sizes are shown
+          separately and stacked on one bar, because reading one as another is
+          what made a 258 GB cluster look like it was holding 2.27 TB (#43). */}
       {ci && ci.totals.disk.totalBytes > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-6">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('stats.storageCapacity')}</h3>
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {ci.clustered
-                ? `${ci.reachableNodes}/${ci.nodeCount} nodes`
+                ? t('stats.nodesReachable', { reachable: ci.reachableNodes, total: ci.nodeCount })
                 : `${ci.nodes[0]?.version} · ${ci.nodes[0]?.os}/${ci.nodes[0]?.arch}`}
             </span>
           </div>
-          <div className="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+
+          {/* VaultS3's share of the used space, then everything else on the same
+              volumes. The gap between the two segments IS the answer to "why is
+              disk usage so much bigger than my objects". */}
+          <div className="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden flex">
             <div
-              className={`h-full rounded-full ${
-                ci.totals.disk.usedBytes / ci.totals.disk.totalBytes > 0.9 ? 'bg-red-500' : 'bg-indigo-500'
-              }`}
-              style={{ width: `${Math.min(100, (ci.totals.disk.usedBytes / ci.totals.disk.totalBytes) * 100).toFixed(1)}%` }}
+              className="h-full bg-indigo-500"
+              style={{ width: `${pctOf(vaultShare(ci), ci.totals.disk.totalBytes)}%` }}
+              title={t('stats.vaultOnDisk')}
+            />
+            <div
+              className={`h-full ${nearlyFull(ci) ? 'bg-red-500' : 'bg-gray-400 dark:bg-gray-500'}`}
+              style={{ width: `${pctOf(ci.totals.disk.usedBytes - vaultShare(ci), ci.totals.disk.totalBytes)}%` }}
+              title={t('stats.otherData')}
             />
           </div>
-          <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
-            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.usedBytes)}</span> used on disk</span>
-            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.freeBytes)}</span> free</span>
-            <span><span className="font-medium text-gray-900 dark:text-white">{formatSize(ci.totals.disk.totalBytes)}</span> total on disk</span>
-            <span className="text-gray-400 dark:text-gray-500">{formatSize(ci.totals.objectBytes)} in {ci.totals.objectCount} object{ci.totals.objectCount !== 1 ? 's' : ''} (logical)</span>
-          </div>
-          {/* The two figures above measure different things and are routinely far
-              apart, which reads as a bug when they sit side by side (issue #43). */}
-          <p className="mt-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
-            Disk usage is read from the filesystems backing the data directories, so it counts every
-            replica and erasure shard, non-current object versions, and anything else stored on those
-            disks. Logical size counts each object&apos;s current version once, cluster-wide.
+
+          <dl className="mt-3 space-y-1.5 text-xs">
+            <Measurement
+              swatch=""
+              label={t('stats.logicalObjects')}
+              value={formatSize(ci.totals.objectBytes)}
+              hint={t('stats.logicalObjectsHint', { count: ci.totals.objectCount })}
+            />
+            <Measurement
+              swatch="bg-indigo-500"
+              label={t('stats.vaultOnDisk')}
+              value={ci.totals.measuredNodes > 0 ? formatSize(ci.totals.vaultBytes) : '--'}
+              hint={vaultHint(ci, t)}
+            />
+            <Measurement
+              swatch={nearlyFull(ci) ? 'bg-red-500' : 'bg-gray-400 dark:bg-gray-500'}
+              label={t('stats.otherData')}
+              value={ci.totals.measuredNodes === ci.reachableNodes && ci.totals.measuredNodes > 0
+                ? formatSize(Math.max(0, ci.totals.disk.usedBytes - vaultShare(ci)))
+                : '--'}
+              hint={t('stats.otherDataHint')}
+            />
+            <Measurement
+              swatch=""
+              label={t('stats.filesystems')}
+              value={formatSize(ci.totals.disk.usedBytes)}
+              hint={t('stats.filesystemsHint', {
+                total: formatSize(ci.totals.disk.totalBytes),
+                free: formatSize(ci.totals.disk.freeBytes),
+              })}
+            />
+          </dl>
+
+          <p className="mt-3 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
+            {t('stats.storageExplain')}
           </p>
+
+          {/* Per-directory split: the quickest way to tell object data apart from
+              metadata and Raft logs when the footprint looks larger than expected. */}
+          {ci.nodes[0]?.usage && ci.nodes[0].usage.dirs.length > 0 && (
+            <div className="mt-3 border-t border-gray-100 dark:border-gray-700/50 pt-3">
+              {/* The age matters: the walk is cached, so a number read right
+                  after a large upload legitimately lags behind it. */}
+              <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                {t('stats.thisNodeDirs')}{' '}
+                <span className="font-normal text-gray-400 dark:text-gray-500">
+                  {t('stats.measuredAgo', { age: shortAge(ci.nodes[0].usage!.scannedAt) })}
+                </span>
+              </p>
+              <div className="space-y-1">
+                {ci.nodes[0].usage.dirs.map((d) => (
+                  <div key={d.path} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="font-mono text-gray-600 dark:text-gray-400 truncate" title={d.path}>{d.path}</span>
+                    {d.error ? (
+                      <span className="text-red-500 dark:text-red-400 shrink-0" title={d.error}>{t('stats.unreadable')}</span>
+                    ) : (
+                      <span className="text-gray-900 dark:text-white shrink-0">
+                        {formatSize(d.bytes)} <span className="text-gray-400 dark:text-gray-500">{t('stats.filesCount', { count: d.files })}</span>
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {ci.clustered && ci.nodeCount > 1 && (
             <div className="mt-3 border-t border-gray-100 dark:border-gray-700/50 pt-3 space-y-1.5">
@@ -149,11 +211,14 @@ export default function StatsPage() {
                   {n.reachable ? (
                     <>
                       <span className="text-gray-500 dark:text-gray-400 w-16">{n.version}</span>
-                      <span className="text-gray-600 dark:text-gray-300">{formatSize(n.disk.usedBytes)} / {formatSize(n.disk.totalBytes)}</span>
+                      <span className="text-gray-600 dark:text-gray-300">
+                        {n.usage ? formatSize(n.usage.bytes) : t('stats.measuring')}
+                        <span className="text-gray-400 dark:text-gray-500"> / {formatSize(n.disk.usedBytes)} {t('stats.usedOnFilesystem')}</span>
+                      </span>
                     </>
                   ) : (
                     <span className="text-red-500 dark:text-red-400 truncate" title={n.error}>
-                      unreachable{n.error ? ` — ${n.error}` : ''}
+                      {t('stats.unreachable')}{n.error ? `: ${n.error}` : ''}
                     </span>
                   )}
                 </div>
@@ -233,7 +298,7 @@ export default function StatsPage() {
                   <div className="flex items-center justify-between text-sm mb-1">
                     <span className="text-gray-700 dark:text-gray-300 font-medium">{b.name}</span>
                     <span className="text-gray-500 dark:text-gray-400">
-                      {formatSize(b.size)} &middot; {b.objectCount} object{b.objectCount !== 1 ? 's' : ''}
+                      {formatSize(b.size)} &middot; {t('stats.objectsCount', { count: b.objectCount })}
                     </span>
                   </div>
                   <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-2">
@@ -244,7 +309,10 @@ export default function StatsPage() {
                   </div>
                   {(b.maxSizeBytes || b.maxObjects) && (
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                      Quota: {b.maxSizeBytes ? formatSize(b.maxSizeBytes) : 'unlimited'} / {b.maxObjects ? `${b.maxObjects} objects` : 'unlimited'}
+                      {t('stats.quota', {
+                        size: b.maxSizeBytes ? formatSize(b.maxSizeBytes) : t('stats.unlimited'),
+                        objects: b.maxObjects ? t('stats.objectsCount', { count: b.maxObjects }) : t('stats.unlimited'),
+                      })}
                     </p>
                   )}
                 </div>
@@ -255,6 +323,54 @@ export default function StatsPage() {
       )}
     </div>
   )
+}
+
+/** One row of the storage breakdown: colour key, what it measures, how much. */
+function Measurement({ swatch, label, value, hint }: { swatch: string; label: string; value: string; hint: string }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className={`h-2 w-2 rounded-full shrink-0 translate-y-[-1px] ${swatch || 'bg-transparent'}`} />
+      <dt className="text-gray-600 dark:text-gray-400 w-32 shrink-0">{label}</dt>
+      <dd className="font-medium text-gray-900 dark:text-white w-24 shrink-0">{value}</dd>
+      <span className="text-gray-400 dark:text-gray-500">{hint}</span>
+    </div>
+  )
+}
+
+/** VaultS3's measured footprint, never more than the filesystem says is used. */
+function vaultShare(ci: ClusterInfo): number {
+  if (ci.totals.measuredNodes === 0 || ci.totals.measuredNodes !== ci.reachableNodes) return 0
+  return Math.min(ci.totals.vaultBytes, ci.totals.disk.usedBytes)
+}
+
+function vaultHint(ci: ClusterInfo, t: (k: string, v?: Record<string, string | number>) => string): string {
+  if (ci.totals.measuredNodes === 0) {
+    return ci.nodes[0]?.usageScanning ? t('stats.measuring') : t('stats.measurementOff')
+  }
+  const parts: string[] = []
+  if (ci.clustered) {
+    parts.push(t('stats.measuredOnNodes', { measured: ci.totals.measuredNodes, total: ci.reachableNodes }))
+  }
+  if (ci.totals.objectBytes > 0 && ci.totals.measuredNodes === ci.reachableNodes) {
+    parts.push(t('stats.timesLogical', { ratio: (ci.totals.vaultBytes / ci.totals.objectBytes).toFixed(2) }))
+  }
+  return parts.join(', ') || t('stats.vaultOnDiskHint')
+}
+
+function shortAge(iso: string): string {
+  const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (secs < 60) return `${secs}s`
+  if (secs < 3600) return `${Math.round(secs / 60)}m`
+  return `${Math.round(secs / 3600)}h`
+}
+
+function nearlyFull(ci: ClusterInfo): boolean {
+  return ci.totals.disk.usedBytes / ci.totals.disk.totalBytes > 0.9
+}
+
+function pctOf(part: number, whole: number): string {
+  if (whole <= 0) return '0'
+  return Math.max(0, Math.min(100, (part / whole) * 100)).toFixed(1)
 }
 
 function StatCard({ label, value }: { label: string; value: string }) {

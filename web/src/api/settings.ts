@@ -11,6 +11,7 @@ export interface Settings {
   storage: {
     dataDir: string
     metadataDir: string
+    usageScanIntervalSecs: number
   }
   features: {
     encryption: boolean

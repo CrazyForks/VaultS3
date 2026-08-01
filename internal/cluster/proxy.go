@@ -30,8 +30,17 @@ type Proxy struct {
 	node      *Node
 	placement PlacementConfig
 	nodeAddrs map[string]string // nodeID → "host:apiPort"
-	mu        sync.RWMutex
-	proxies   map[string]*httputil.ReverseProxy // cached per-node proxies
+	// configured holds the cluster.peer_apis entries. The membership sync derives
+	// peer addresses from Raft, which carries no API port, so it assumes every
+	// node serves on this one's. That holds for one node per host but not when
+	// nodes share a host on different ports, where every peer then resolved to
+	// THIS node: object forwarding, rebalance, and the capacity rollup all
+	// silently talked to the wrong node. An explicitly configured address wins.
+	// Only peers belong here: this node's own entry stays derived, since the
+	// configured form is a bind address that may be a wildcard.
+	configured map[string]string
+	mu         sync.RWMutex
+	proxies    map[string]*httputil.ReverseProxy // cached per-node proxies
 }
 
 // NewProxy creates a new cluster proxy.
@@ -43,6 +52,19 @@ func NewProxy(ring *HashRing, node *Node, placement PlacementConfig, nodeAddrs m
 		placement: placement,
 		nodeAddrs: nodeAddrs,
 		proxies:   make(map[string]*httputil.ReverseProxy),
+	}
+}
+
+// SetPeerAPIs pins peers to explicitly configured API addresses, so the
+// membership sync cannot replace them with addresses derived from Raft.
+func (p *Proxy) SetPeerAPIs(peers map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.configured = make(map[string]string, len(peers))
+	for id, addr := range peers {
+		if addr != "" {
+			p.configured[id] = addr
+		}
 	}
 }
 
@@ -73,13 +95,24 @@ func (p *Proxy) syncMembership(apiPort int) {
 	if err != nil {
 		return
 	}
+	selfID := ""
+	if p.node != nil {
+		selfID = p.node.NodeID()
+	}
 	members := make(map[string]string, len(servers))
 	for _, s := range servers {
+		id := string(s.ID)
+		// A configured peer_apis entry is exact; the derived one is a guess that
+		// reuses this node's API port for everyone.
+		if addr := p.configuredAddr(id); addr != "" && id != selfID {
+			members[id] = addr
+			continue
+		}
 		host := string(s.Address)
 		if i := strings.LastIndex(host, ":"); i >= 0 {
 			host = host[:i]
 		}
-		members[string(s.ID)] = fmt.Sprintf("%s:%d", host, apiPort)
+		members[id] = fmt.Sprintf("%s:%d", host, apiPort)
 	}
 
 	p.mu.Lock()
@@ -309,6 +342,14 @@ func traceForwardRequest(r *http.Request, targetNodeID, addr string) *http.Reque
 // IsProxied checks if a request was already proxied from another node.
 func IsProxied(r *http.Request) bool {
 	return r.Header.Get("X-VaultS3-Proxy") != ""
+}
+
+// configuredAddr returns the statically configured API address for a node, or ""
+// if the deployment left it to be derived from Raft membership.
+func (p *Proxy) configuredAddr(nodeID string) string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.configured[nodeID]
 }
 
 // UpdateNodeAddr updates the API address for a node.

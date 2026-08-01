@@ -298,6 +298,13 @@ type StorageConfig struct {
 	// bucket (issue #45). Existing buckets are left untouched.
 	// (env: VAULTS3_DEFAULT_BUCKETS, comma-separated)
 	DefaultBuckets []string `yaml:"default_buckets"`
+	// UsageScanIntervalSecs is how often, at most, VaultS3 measures its own
+	// on-disk footprint by walking the data directories, so the dashboard can
+	// separate "VaultS3 is using this much" from the filesystem's total used
+	// space (issue #43). The walk runs in the background and only when someone
+	// asks for the numbers. Set to 0 to disable it on very large or slow
+	// filesystems. (env: VAULTS3_USAGE_SCAN_INTERVAL_SECS)
+	UsageScanIntervalSecs int `yaml:"usage_scan_interval_secs"`
 }
 
 type AuthConfig struct {
@@ -396,8 +403,9 @@ func Load(path string) (*Config, error) {
 			ShutdownTimeoutSecs: 30,
 		},
 		Storage: StorageConfig{
-			DataDir:     "./data",
-			MetadataDir: "./metadata",
+			DataDir:               "./data",
+			MetadataDir:           "./metadata",
+			UsageScanIntervalSecs: 300,
 		},
 		Logging: LoggingConfig{
 			FilePath: "./access.log",
@@ -523,6 +531,12 @@ func applyEnvOverrides(cfg *Config) {
 	// Comma-separated, e.g. VAULTS3_DEFAULT_BUCKETS=app-data,backups
 	if v := os.Getenv("VAULTS3_DEFAULT_BUCKETS"); v != "" {
 		cfg.Storage.DefaultBuckets = splitList(v)
+	}
+	// 0 disables the footprint walk entirely, so parse rather than require non-empty.
+	if v := os.Getenv("VAULTS3_USAGE_SCAN_INTERVAL_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Storage.UsageScanIntervalSecs = n
+		}
 	}
 	if v := os.Getenv("VAULTS3_ENCRYPTION_KEY"); v != "" {
 		cfg.Encryption.Enabled = true

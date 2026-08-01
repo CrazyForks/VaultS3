@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Kodiqa-Solutions/VaultS3/internal/backup"
@@ -23,6 +24,7 @@ import (
 	"github.com/Kodiqa-Solutions/VaultS3/internal/selfupdate"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/snapshot"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/storage"
+	"github.com/Kodiqa-Solutions/VaultS3/internal/sysinfo"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/tiering"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/vector"
 )
@@ -59,6 +61,8 @@ type APIHandler struct {
 	clusterNodeAddrs func() map[string]string                // nodeID -> peer addr for all cluster nodes (nil if single-node)
 	clusterSecret    string                                  // shared secret for the inter-node /cluster/sysinfo call
 	clusterCtl       ClusterController                       // membership ops (join/leave/status); nil if single-node
+	usage            *sysinfo.UsageCache                     // measured on-disk footprint; built lazily, nil when disabled
+	usageOnce        sync.Once                               // guards building usage
 	writable         *atomic.Bool                            // node-local write gate (drain); nil ⇒ always writable
 	triggerRebalance func()                                  // kick a background rebalance pass (nil if single-node)
 	rebalanceRunning func() bool                             // whether a rebalance is in progress

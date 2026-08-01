@@ -19,6 +19,13 @@ const clusterSecretHeader = "X-Cluster-Secret"
 // NodeSystemInfo is one node's version, capacity, and object usage. The cluster
 // fields (NodeID/Address/Reachable) are omitted from the single-node
 // /api/v1/system response and populated only in the cluster rollup.
+//
+// Three different sizes are reported deliberately, because conflating them is
+// what made issue #43 look like a bug:
+//
+//	ObjectBytes — logical: each object's current version counted once, cluster-wide.
+//	Usage       — physical: what VaultS3's own directories occupy on this node.
+//	Disk        — the whole filesystem, VaultS3's share and everyone else's.
 type NodeSystemInfo struct {
 	NodeID      string       `json:"nodeId,omitempty"`
 	Address     string       `json:"address,omitempty"`
@@ -32,6 +39,11 @@ type NodeSystemInfo struct {
 	ObjectBytes int64        `json:"objectBytes"`
 	ObjectCount int64        `json:"objectCount"`
 	BucketCount int          `json:"bucketCount"`
+	// Usage is this node's measured footprint, nil until the first background
+	// walk finishes (or always, if the walk is disabled). UsageScanning says a
+	// walk is running now, so a dashboard can show "measuring" rather than "0".
+	Usage         *sysinfo.Usage `json:"usage,omitempty"`
+	UsageScanning bool           `json:"usageScanning,omitempty"`
 }
 
 // clusterInfoClient fetches peers' /api/v1/system for the cluster rollup. Inter
@@ -42,19 +54,31 @@ var clusterInfoClient = &http.Client{
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 }
 
+// storageDirs lists every directory VaultS3 writes to on this node. It backs
+// both the capacity readout and the footprint walk, so anything missing here is
+// storage the operator cannot see: the Raft directory used to be absent, which
+// hid the log and snapshot growth on a clustered node (issue #43).
+func (h *APIHandler) storageDirs() []string {
+	if h.cfg == nil {
+		return nil
+	}
+	dirs := []string{h.cfg.Storage.DataDir, h.cfg.Storage.MetadataDir}
+	if h.cfg.Tiering.Enabled && h.cfg.Tiering.ColdDataDir != "" {
+		dirs = append(dirs, h.cfg.Tiering.ColdDataDir)
+	}
+	if h.cfg.Erasure.Enabled {
+		dirs = append(dirs, h.cfg.Erasure.DataDirs...)
+	}
+	if h.cfg.Cluster.Enabled && h.cfg.Cluster.DataDir != "" {
+		dirs = append(dirs, h.cfg.Cluster.DataDir)
+	}
+	return uniqueNonEmpty(dirs)
+}
+
 // localSystemInfo gathers this node's version, on-disk capacity, and logical
 // object usage.
 func (h *APIHandler) localSystemInfo() NodeSystemInfo {
-	var dirs []string
-	if h.cfg != nil {
-		dirs = append(dirs, h.cfg.Storage.DataDir, h.cfg.Storage.MetadataDir)
-		if h.cfg.Tiering.Enabled && h.cfg.Tiering.ColdDataDir != "" {
-			dirs = append(dirs, h.cfg.Tiering.ColdDataDir)
-		}
-		if h.cfg.Erasure.Enabled {
-			dirs = append(dirs, h.cfg.Erasure.DataDirs...)
-		}
-	}
+	dirs := h.storageDirs()
 
 	var objectBytes, objectCount int64
 	var bucketCount int
@@ -74,16 +98,44 @@ func (h *APIHandler) localSystemInfo() NodeSystemInfo {
 		}
 	}
 
+	usage, scanning := h.diskUsageCache().Get()
+
 	return NodeSystemInfo{
-		Version:     version,
-		OS:          runtime.GOOS,
-		Arch:        runtime.GOARCH,
-		DataDirs:    uniqueNonEmpty(dirs),
-		Disk:        sysinfo.DiskUsage(dirs),
-		ObjectBytes: objectBytes,
-		ObjectCount: objectCount,
-		BucketCount: bucketCount,
+		Version:       version,
+		OS:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		DataDirs:      dirs,
+		Disk:          sysinfo.DiskUsage(dirs),
+		ObjectBytes:   objectBytes,
+		ObjectCount:   objectCount,
+		BucketCount:   bucketCount,
+		Usage:         usage,
+		UsageScanning: scanning,
 	}
+}
+
+// DiskUsage returns this node's last completed footprint scan, or nil if none
+// has finished yet or measurement is disabled. It never blocks, so it is safe
+// on a /metrics scrape.
+func (h *APIHandler) DiskUsage() *sysinfo.Usage {
+	u, _ := h.diskUsageCache().Get()
+	return u
+}
+
+// diskUsageCache returns the footprint cache, creating it on first use so the
+// walk costs nothing until someone opens the dashboard. Returns nil (a usable
+// no-op cache) when storage.usage_scan_interval_secs is 0.
+func (h *APIHandler) diskUsageCache() *sysinfo.UsageCache {
+	if h.cfg == nil {
+		return nil
+	}
+	h.usageOnce.Do(func() {
+		h.usage = sysinfo.NewUsageCache(
+			h.storageDirs,
+			time.Duration(h.cfg.Storage.UsageScanIntervalSecs)*time.Second,
+		)
+	})
+	return h.usage
 }
 
 // handleSystemInfo handles GET /api/v1/system: this node's version, data
@@ -126,8 +178,12 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 
 	// Aggregate physical disk across reachable nodes (replicas legitimately use
 	// disk on multiple nodes, so this is the true "how full is the cluster").
+	// VaultS3's own footprint sums the same way, but only over the nodes that
+	// have finished a walk: measuredNodes says how much of the cluster the
+	// number covers, because a partial sum silently understates the total.
 	var totalDisk sysinfo.Disk
-	reachable := 0
+	var vaultBytes, vaultFiles uint64
+	reachable, measured := 0, 0
 	for _, n := range nodes {
 		if !n.Reachable {
 			continue
@@ -136,6 +192,11 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 		totalDisk.TotalBytes += n.Disk.TotalBytes
 		totalDisk.UsedBytes += n.Disk.UsedBytes
 		totalDisk.FreeBytes += n.Disk.FreeBytes
+		if n.Usage != nil {
+			measured++
+			vaultBytes += n.Usage.Bytes
+			vaultFiles += n.Usage.Files
+		}
 	}
 
 	// Logical usage is NOT summed. Object metadata is replicated by Raft, so every
@@ -151,9 +212,12 @@ func (h *APIHandler) handleClusterInfo(w http.ResponseWriter, _ *http.Request) {
 		"reachableNodes": reachable,
 		"nodes":          nodes,
 		"totals": map[string]any{
-			"disk":        totalDisk,
-			"objectBytes": objectBytes,
-			"objectCount": objectCount,
+			"disk":          totalDisk,
+			"objectBytes":   objectBytes,
+			"objectCount":   objectCount,
+			"vaultBytes":    vaultBytes,
+			"vaultFiles":    vaultFiles,
+			"measuredNodes": measured,
 		},
 	})
 }

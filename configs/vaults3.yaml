@@ -35,6 +35,14 @@ storage:
   # bucket deleted while still listed here comes back empty on the next restart.
   # (env: VAULTS3_DEFAULT_BUCKETS=app-data,backups)
   default_buckets: []
+  # How often, at most, VaultS3 measures its own on-disk footprint by walking the
+  # data, metadata, erasure, cold-tier and Raft directories. That is what lets the
+  # dashboard, `vaults3-cli info` and /metrics separate "VaultS3 is using this
+  # much" from "this filesystem is this full", which also counts the OS, container
+  # images and logs. The walk runs in the background, only when something asks for
+  # the numbers. Set to 0 to switch it off on very large or slow filesystems.
+  # (env: VAULTS3_USAGE_SCAN_INTERVAL_SECS)
+  usage_scan_interval_secs: 300
 
 auth:
   admin_access_key: "vaults3-admin"
@@ -244,7 +252,11 @@ cluster:
   api_port: 9000               # API port for this node
   bootstrap: true              # true for the first node
   peers: []                    # ["node-2@host2:9001", "node-3@host3:9001"]
-  peer_apis: {}                # nodeID → "host:apiPort" for proxying
+  # nodeID → "host:apiPort" for proxying. Required when nodes do not all serve the
+  # API on the same port: without an entry the address is derived from Raft
+  # membership, which knows only the raft port and assumes this node's API port.
+  # An entry here always wins over the derived address.
+  peer_apis: {}
   placement:
     # Default number of nodes holding each object; override per bucket with
     # `vaults3-cli bucket durability <bucket> --replicas=N`.

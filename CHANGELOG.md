@@ -6,6 +6,60 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.47] - 2026-08-01
+### Added
+- **VaultS3 now measures its own on-disk footprint**, so "how much are my objects
+  really costing" is answered with a number instead of an inference (issue #43,
+  follow-up reported by kesavkolla). The dashboard Stats panel, `vaults3-cli info`
+  and `GET /api/v1/cluster/info` present three sizes side by side and say what each
+  one counts:
+  - **Logical**: each object's current version, counted once cluster-wide.
+  - **VaultS3 on disk**: what its data, metadata, erasure, cold-tier and Raft
+    directories actually occupy, summed per node. This is the figure to compare
+    against logical for a real amplification ratio (replicas, parity shards,
+    non-current versions), and it is shown as an explicit multiple.
+  - **Filesystems**: `statfs` of the whole volumes, which also counts the operating
+    system, container images, logs, and any other tenant of the same disk.
+
+  The panel stacks VaultS3's share and everything else on one bar, so the gap
+  between an object total and a much larger "used" figure is visible rather than
+  suspicious. A per-directory breakdown separates object data from metadata and
+  Raft logs, which is what distinguishes real growth from a busy volume.
+- Sizes are allocated blocks, matching `du`, so a bucket full of small objects
+  shows the block-rounding cost it genuinely pays. Hardlinks are counted once and
+  symlinks are not followed.
+- The walk runs in the background and is cached: `storage.usage_scan_interval_secs`
+  (env `VAULTS3_USAGE_SCAN_INTERVAL_SECS`, Helm `usageScanIntervalSecs`, default
+  300) caps how often it may repeat, `0` disables it. It never runs on a request.
+  The dashboard and CLI show how old the measurement is.
+- New Prometheus series: `vaults3_disk_usage_bytes{dir=...}`,
+  `vaults3_disk_usage_files{dir=...}`, `vaults3_disk_usage_bytes_total` and
+  `vaults3_disk_usage_scanned_timestamp_seconds`, so physical growth can be graphed
+  next to the logical `vaults3_storage_size_bytes_total`.
+
+### Fixed
+- **A clustered node addressed every peer as itself when peers shared a host on
+  different ports**, because the membership sync rebuilt each peer's API address
+  from its Raft address plus *this* node's API port, discarding the configured
+  `cluster.peer_apis`. One node per IP (the usual Kubernetes shape) was unaffected,
+  but a single-host or host-networked cluster silently sent all inter-node traffic
+  back to itself: **object replicas were never placed on peers despite
+  `replica_count: 3`**, rebalance moved nothing, and the capacity rollup reported
+  one node's disk usage once per node. Explicitly configured peer addresses now win
+  over derived ones; this node's own entry stays derived, since the configured form
+  is a bind address that may be a wildcard. Existing objects written before the fix
+  stay single-copy until `vaults3-cli cluster rebalance`.
+- The Raft directory was missing from the reported storage directories, so its log
+  and snapshot growth was invisible in capacity numbers on a clustered node.
+
+### Changed
+- The Stats card previously labelled "Total Storage" is now "Logical Storage", and
+  the capacity panel names each figure, rather than leaving two very different
+  numbers labelled "storage" next to each other.
+- The Stats page had a handful of strings the i18n sweep missed (the auto-refresh
+  toggle, the capacity legend, per-bucket quota lines); they are translated now.
+- Settings shows the footprint scan interval.
+
 ## [4.4.46] - 2026-08-01
 ### Added
 - **The dashboard is now translated** (issue #33, requested by autool). It ships
@@ -1309,7 +1363,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...HEAD
+[4.4.47]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...v4.4.47
 [4.4.46]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...v4.4.46
 [4.4.45]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...v4.4.45
 [4.4.44]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...v4.4.44

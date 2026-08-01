@@ -317,6 +317,9 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 
 		clusterProxy = cluster.NewProxy(ring, node, cfg.Cluster.Placement, nodeAddrs)
+		// Pin peers to their configured API addresses so the Raft-derived ones,
+		// which assume every node shares this node's API port, cannot replace them.
+		clusterProxy.SetPeerAPIs(cfg.Cluster.PeerAPIs)
 		slog.Info("cluster mode enabled",
 			"node_id", cfg.Cluster.NodeID,
 			"ring_nodes", ring.NodeCount(),
@@ -831,6 +834,10 @@ func (s *Server) Run() error {
 	// Dashboard API
 	apiHandler := api.NewAPIHandler(s.metaStore, s.engine, s.metrics, s.cfg, s.activity)
 	apiHandler.SetS3Authenticator(s.s3Auth)
+	// Graph the measured physical footprint next to the logical size, so growth
+	// that never shows up in object bytes (old versions, replicas, Raft logs) is
+	// visible in Prometheus and not just in the dashboard (issue #43).
+	s.metrics.SetDiskUsage(apiHandler.DiskUsage)
 	// Share the node write gate so the admin drain/undrain endpoints toggle the
 	// same flag the S3 handler enforces.
 	apiHandler.SetWritable(s.writable)

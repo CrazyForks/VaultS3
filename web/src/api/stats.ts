@@ -32,6 +32,22 @@ export function getStats(): Promise<Stats> {
   return apiFetch<Stats>('/stats')
 }
 
+export interface DirUsage {
+  path: string
+  bytes: number
+  files: number
+  error?: string
+}
+
+/** VaultS3's own measured footprint, as opposed to the whole filesystem. */
+export interface Usage {
+  dirs: DirUsage[]
+  bytes: number
+  files: number
+  scannedAt: string
+  tookMs: number
+}
+
 export interface SystemInfo {
   version: string
   os: string
@@ -41,6 +57,9 @@ export interface SystemInfo {
   objectBytes: number
   objectCount: number
   bucketCount: number
+  /** Absent until the first background scan finishes, or when scanning is off. */
+  usage?: Usage
+  usageScanning?: boolean
 }
 
 export function getSystemInfo(): Promise<SystemInfo> {
@@ -63,6 +82,10 @@ export interface ClusterInfo {
     disk: { totalBytes: number; usedBytes: number; freeBytes: number }
     objectBytes: number
     objectCount: number
+    /** Summed across the nodes that have finished a scan (measuredNodes). */
+    vaultBytes: number
+    vaultFiles: number
+    measuredNodes: number
   }
 }
 

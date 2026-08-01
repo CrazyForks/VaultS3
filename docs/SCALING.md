@@ -167,6 +167,13 @@ cluster:
 
 - `peers` entries use the format **`nodeID@host:raftPort`**.
 - `peer_apis` maps **`nodeID → host:apiPort`** so nodes can proxy S3 requests to the data owner.
+  Set it whenever nodes do **not** all serve the API on the same port. Without an entry,
+  a node derives its peers' addresses from Raft membership, which carries only the Raft
+  port, and assumes every peer uses the API port this node uses. Where several nodes share
+  a host on different ports, that derivation collapses every peer onto the local node.
+  Configured entries always win over derived ones (fixed in 4.4.47; before that they were
+  overwritten a second after startup, so replicas were never placed on peers). A node's own
+  entry is always derived, since `bind_addr` is frequently the `0.0.0.0` wildcard.
 - **Optional, separate the cluster control plane from S3 traffic** (recommended for security):
   ```yaml
   server:
@@ -285,6 +292,14 @@ vaults3-cli cluster decommission node-2        # guided drain + rebalance before
 Kubernetes auto-joins on `kubectl scale`; elsewhere start the node with
 `cluster.join_addr` set or run `vaults3-cli cluster join <id> <raftAddr>`.
 
+> **Upgrading to 4.4.47 on a cluster whose nodes share a host on different ports:**
+> before 4.4.47 the configured `peer_apis` were discarded shortly after startup, so
+> peers resolved to the local node and replicas were never placed. Confirm the fix took
+> with `vaults3-cli info`, whose per-node line should now show a distinct footprint per
+> node, then run `vaults3-cli cluster rebalance` once to backfill the copies objects
+> written before the upgrade never got. Clusters with one node per IP (the usual
+> Kubernetes shape) were unaffected and need no action.
+
 **Draining.** A drained node returns `503 SlowDown` for S3 object writes while
 still serving reads, so you can cordon it before maintenance. In a hash-ring
 cluster, new writes for that node's keys keep routing to it until you also change
@@ -355,14 +370,22 @@ cluster:
 
   | Figure | What it counts |
   |--------|----------------|
-  | `totals.disk.usedBytes` | Used space on the **filesystems** backing the data directories, summed per node. Includes every replica (`replica_count` copies), erasure parity shards, non-current object versions, in-progress multipart parts, and any non-VaultS3 data sharing those disks. |
   | `totals.objectBytes` | **Logical** size: each object's current version, counted once cluster-wide. Excludes replicas, parity, and old versions. |
+  | `totals.vaultBytes` | **VaultS3's own footprint**: what its data, metadata, erasure, cold-tier and Raft directories actually occupy, summed over the nodes that have finished a scan (`totals.measuredNodes`). Includes replicas, parity shards, non-current versions and in-progress multipart parts, and nothing else. |
+  | `totals.disk.usedBytes` | Used space on the whole **filesystems** backing those directories, summed per node. Also counts the operating system, container images, logs, and any other tenant of the same volume. |
 
   So on a 3-replica cluster with versioning enabled, several times the logical size on
-  disk is expected. A ratio far beyond `replica_count` x erasure overhead usually means
-  accumulated non-current versions or abandoned multipart uploads — expire them with a
-  lifecycle rule (`noncurrent_version_expiration_days`, `max_noncurrent_versions`,
-  `abort_incomplete_multipart_days`).
+  disk is expected. Compare `vaultBytes` against `objectBytes`, not `disk.usedBytes`:
+  the first pair is a real amplification ratio, while the third figure is mostly a
+  statement about the volume, not about VaultS3. A `vaultBytes / objectBytes` ratio
+  far beyond `replica_count` x erasure overhead usually means accumulated non-current
+  versions or abandoned multipart uploads — expire them with a lifecycle rule
+  (`noncurrent_version_expiration_days`, `max_noncurrent_versions`,
+  `abort_incomplete_multipart_days`). Per-directory numbers in the same response (and
+  in `vaults3-cli info`) tell object data apart from metadata and Raft logs.
+
+  The walk behind `vaultBytes` is cached; `storage.usage_scan_interval_secs` sets how
+  often it may repeat (default 300, `0` disables it and leaves `vaultBytes` at zero).
 - **Metrics (Prometheus):** `GET /metrics`, watch for replication lag, heal activity, and
   per-node request distribution.
 - **Failure detection** is automatic: the detector marks a peer `suspect` after

@@ -137,7 +137,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Active-active replication**: Bidirectional site-to-site sync with vector clocks for causal ordering, pluggable conflict resolution (last-writer-wins, largest-object, site-preference), and change log for efficient delta sync
 - **Async replication**: One-way async replication to peer VaultS3 instances with BoltDB-backed queue, retry with exponential backoff, and loop prevention
 - **CLI tool**: Standalone `vaults3-cli` binary for bucket, object, user, and replication management without AWS CLI, plus `vaults3-cli info` for server version and storage capacity (used / free / total) and `vaults3-cli cluster` for day-2 cluster operations (status, join, leave, drain/undrain a member, rebalance, decommission — see [docs/SCALING.md](docs/SCALING.md))
-- **Capacity overview**: `GET /api/v1/system` and the dashboard Stats page report the version and on-disk capacity (total / used / free, aggregated across the data, cold-tier, and erasure directories) alongside logical object usage, so you can see how full the storage is at a glance. In a cluster, `GET /api/v1/cluster/info` (and the same dashboard panel / `vaults3-cli info`) aggregate capacity across all nodes with a per-node breakdown, an `mc admin info`-style view. Physical disk is summed across nodes (replicas really do occupy separate disks) while logical size is counted once, since object metadata is the same on every node. Note the two measure different things: disk usage comes from the filesystems backing the data directories, so it includes every replica and erasure shard, non-current object versions, and anything else stored on those disks, whereas logical size counts each object's current version once
+- **Capacity overview**: `GET /api/v1/system` and the dashboard Stats page report the version and storage usage; in a cluster, `GET /api/v1/cluster/info` (the same dashboard panel, and `vaults3-cli info`) roll it up across all nodes with a per-node breakdown, an `mc admin info`-style view. Three sizes are reported separately because they answer different questions and are not meant to match: **logical** (each object's current version, counted once cluster-wide, since object metadata is the same on every node), **VaultS3 on disk** (what its data, metadata, erasure, cold-tier and Raft directories actually occupy, summed per node, so it includes replicas, parity shards and non-current versions), and **filesystems** (statfs of the whole volumes, which usually also hold the OS, container images and logs). The middle figure is the one to compare against logical for a real amplification ratio, with a per-directory split to tell object data apart from metadata and Raft logs. It comes from a cached background walk, `storage.usage_scan_interval_secs` (default 300, `0` disables it), and is also exported as `vaults3_disk_usage_bytes{dir=...}`
 - **Presigned upload restrictions**: Enforce max file size, content type whitelist, and key prefix on presigned PUT URLs
 - **Full-text search**: In-memory search index over object metadata, tags, content type, and key patterns with incremental updates
 - **Semantic / vector search (optional)**: Embeds object text via any OpenAI-compatible endpoint (Ollama, llama.cpp, OpenAI…) and serves similarity search + RAG retrieval from `POST /api/v1/vectors/query`, all in the single binary, no external vector database. Searchable from the dashboard (Keyword / Semantic toggle)
@@ -493,6 +493,18 @@ curl http://localhost:9000/metrics
 
 Exposes: request counts by method, bytes in/out, per-bucket storage size and object counts, per-bucket request/bytes/error counters, quota usage, Go runtime stats (goroutines, memory, GC).
 
+Storage is reported both ways, which is what makes growth diagnosable:
+
+| Series | Measures |
+|--------|----------|
+| `vaults3_storage_size_bytes_total` | **Logical**: each object's current version, counted once. |
+| `vaults3_disk_usage_bytes{dir="..."}` | **Physical**: what that directory actually occupies on disk, per data / metadata / erasure / cold-tier / Raft directory. Includes replicas, parity shards and non-current versions. |
+| `vaults3_disk_usage_files{dir="..."}` | File count behind the figure above. |
+| `vaults3_disk_usage_bytes_total` | Physical total for this node. |
+| `vaults3_disk_usage_scanned_timestamp_seconds` | When the footprint was last measured, so a stale reading is detectable. |
+
+Graphing physical against logical shows amplification directly. The `vaults3_disk_usage_*` series come from a cached background walk and are absent when `storage.usage_scan_interval_secs` is `0`.
+
 ### Web Dashboard
 
 The built-in dashboard is available at `http://localhost:9000/dashboard/`. Login with your admin credentials. Features:
@@ -509,7 +521,7 @@ The built-in dashboard is available at `http://localhost:9000/dashboard/`. Login
 - Lambda triggers, status overview, trigger table with event filtering
 - Backups, status cards, history table, manual trigger button
 - Activity log, real-time S3 operation feed with auto-refresh
-- Storage stats, total storage, per-bucket breakdown, runtime metrics, auto-refresh toggle (30s)
+- Storage stats, logical size, VaultS3's measured on-disk footprint and total filesystem usage side by side (with a per-directory and per-node breakdown), per-bucket breakdown, runtime metrics, auto-refresh toggle (30s)
 - Migrate, import buckets from any S3-compatible source with live progress and a Cancel button for in-flight jobs
 - Version indicator, the running version is shown at the bottom of the sidebar, with an "update available" hint linking to releases
 - Dark/light theme, toggle with system preference detection
@@ -638,6 +650,7 @@ All settings can be overridden via environment variables (takes precedence over 
 | `VAULTS3_DATA_DIR` | Object storage directory | `./data` |
 | `VAULTS3_METADATA_DIR` | BoltDB metadata directory | `./metadata` |
 | `VAULTS3_DEFAULT_BUCKETS` | Comma-separated buckets to create on startup if missing | _(none)_ |
+| `VAULTS3_USAGE_SCAN_INTERVAL_SECS` | How often VaultS3 may re-measure its own on-disk footprint (0 disables) | `300` |
 | `VAULTS3_ENCRYPTION_KEY` | 64-char hex key (enables encryption) | _(disabled)_ |
 | `VAULTS3_TLS_CERT` | TLS certificate file path | _(disabled)_ |
 | `VAULTS3_TLS_KEY` | TLS private key file path | _(disabled)_ |

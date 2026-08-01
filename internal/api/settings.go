@@ -14,8 +14,9 @@ type settingsResponse struct {
 		TLSEnabled          bool   `json:"tlsEnabled"`
 	} `json:"server"`
 	Storage struct {
-		DataDir     string `json:"dataDir"`
-		MetadataDir string `json:"metadataDir"`
+		DataDir               string `json:"dataDir"`
+		MetadataDir           string `json:"metadataDir"`
+		UsageScanIntervalSecs int    `json:"usageScanIntervalSecs"`
 	} `json:"storage"`
 	Features struct {
 		Encryption          bool `json:"encryption"`
@@ -62,6 +63,7 @@ func (h *APIHandler) handleSettings(w http.ResponseWriter, _ *http.Request) {
 
 	resp.Storage.DataDir = h.cfg.Storage.DataDir
 	resp.Storage.MetadataDir = h.cfg.Storage.MetadataDir
+	resp.Storage.UsageScanIntervalSecs = h.cfg.Storage.UsageScanIntervalSecs
 
 	resp.Features.Encryption = h.cfg.Encryption.Enabled
 	resp.Features.PerBucketEncryption = h.cfg.Encryption.PerBucket

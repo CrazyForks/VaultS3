@@ -11,6 +11,7 @@ import (
 
 	"github.com/Kodiqa-Solutions/VaultS3/internal/metadata"
 	"github.com/Kodiqa-Solutions/VaultS3/internal/storage"
+	"github.com/Kodiqa-Solutions/VaultS3/internal/sysinfo"
 )
 
 // bucketMetrics holds per-bucket request counters.
@@ -36,6 +37,12 @@ type Collector struct {
 	// Per-bucket metrics
 	bucketMu      sync.RWMutex
 	bucketMetrics map[string]*bucketMetrics
+
+	// diskUsage reports VaultS3's measured on-disk footprint, so the physical
+	// size can be graphed next to the logical one instead of guessed at from
+	// filesystem-wide numbers (issue #43). nil until wired, or when the scan is
+	// disabled; it never blocks a scrape.
+	diskUsage func() *sysinfo.Usage
 
 	// Request latency histogram
 	latencyMu      sync.Mutex
@@ -101,6 +108,13 @@ func NewCollector(store *metadata.Store, engine storage.Engine) *Collector {
 		startTime:     time.Now(),
 		bucketMetrics: make(map[string]*bucketMetrics),
 	}
+}
+
+// SetDiskUsage wires the measured on-disk footprint into /metrics. The supplied
+// function must return the last completed scan without blocking, since it runs
+// inside a scrape.
+func (c *Collector) SetDiskUsage(fn func() *sysinfo.Usage) {
+	c.diskUsage = fn
 }
 
 const maxBucketMetrics = 100
@@ -273,6 +287,21 @@ func (c *Collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, "vaults3_storage_size_bytes_total %d\n", totalSize)
 		fmt.Fprintf(w, "vaults3_objects_total %d\n", totalObjects)
+	}
+
+	// Physical footprint per directory. vaults3_storage_size_bytes_total above is
+	// logical (each current object version once); this is what those objects, plus
+	// their replicas, parity shards, old versions, and Raft logs, actually occupy
+	// on this node's disks.
+	if c.diskUsage != nil {
+		if u := c.diskUsage(); u != nil {
+			for _, d := range u.Dirs {
+				fmt.Fprintf(w, "vaults3_disk_usage_bytes{dir=%q} %d\n", d.Path, d.Bytes)
+				fmt.Fprintf(w, "vaults3_disk_usage_files{dir=%q} %d\n", d.Path, d.Files)
+			}
+			fmt.Fprintf(w, "vaults3_disk_usage_bytes_total %d\n", u.Bytes)
+			fmt.Fprintf(w, "vaults3_disk_usage_scanned_timestamp_seconds %d\n", u.ScannedAt.Unix())
+		}
 	}
 
 	// Per-bucket request metrics
