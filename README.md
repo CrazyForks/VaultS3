@@ -108,6 +108,7 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Presigned URLs**: Pre-authenticated URL generation
 - **Web dashboard**: Built-in React UI at `/dashboard/` with home overview page, file browser (grid or list layout with file-type icons, sortable columns, pagination, file preview, metadata panel, version history panel with diff viewer/rollback/tagging, multi-select, bulk delete, bulk zip download, breadcrumb navigation), drag-and-drop file and folder upload (streamed straight to storage so large files work, with subfolder structure preserved), copy-to-clipboard buttons, access key management, activity log, storage stats with auto-refresh, read-only settings viewer, IAM management, audit trail viewer (sortable, paginated), search (sortable, paginated), notifications, replication status, lambda triggers, backup management, bucket config (versioning toggle with status indicator, lifecycle editor, CORS editor), keyboard shortcuts (`/` search, `?` help), toast notifications (success/error/info), dark/light theme, collapsible sidebar, remember-me sign-in, responsive layout
 - **Health checks**: `/health` (liveness) and `/ready` (readiness) endpoints for load balancers and Kubernetes
+- **Buckets on first start**: Declare the buckets a deployment needs (`VAULTS3_DEFAULT_BUCKETS=app-data,backups`, `storage.default_buckets`, or the chart's `defaultBuckets`) and the missing ones are created while the server starts, so a container needs no init container or one-off S3 client call to become usable. Existing buckets are never touched, and an invalid name or a failed create stops startup instead of coming up quietly incomplete
 - **Graceful shutdown**: Drains in-flight requests on SIGTERM/SIGINT with configurable timeout
 - **TLS support**: Optional HTTPS with configurable cert/key paths
 - **Separate dashboard port**: Optionally serve the Web UI + its API on a dedicated port (`server.console_port`, e.g. 9001) apart from the S3 API, so each can have its own firewall rules / TLS / reverse proxy (MinIO-style)
@@ -567,6 +568,38 @@ docker run -p 9000:9000 -v ./data:/data -v ./metadata:/metadata vaults3
 
 Images are automatically published to [Docker Hub](https://hub.docker.com/r/eniz1806/vaults3) on every push to `main`.
 
+#### Buckets on First Start
+
+A fresh container has no buckets, which normally means an init container or a
+one-off S3 client call before the app can write anything. Name the buckets you
+need instead and VaultS3 creates the missing ones while it starts:
+
+```bash
+docker run -p 9000:9000 \
+  -e VAULTS3_DEFAULT_BUCKETS=app-data,backups \
+  -v ./data:/data -v ./metadata:/metadata \
+  eniz1806/vaults3
+```
+
+or in `vaults3.yaml`:
+
+```yaml
+storage:
+  default_buckets: ["app-data", "backups"]
+```
+
+- Buckets that already exist are left completely alone: no data, policy,
+  versioning, or lifecycle setting is touched, so the variable is safe to keep in
+  place across restarts and upgrades.
+- Removing a name from the list never deletes anything.
+- The setting means "these buckets must exist", so if you delete one while its
+  name is still listed, the next restart creates it again, empty. Take the name
+  out of the list first if you mean the deletion to stick.
+- An invalid bucket name, or a bucket that cannot be created, stops startup with
+  an error naming the bucket, rather than starting up quietly incomplete.
+- On a cluster, creation is a replicated write like any other, so the nodes agree
+  on one bucket no matter how many of them boot with the same setting.
+
 #### Environment Variables
 
 All settings can be overridden via environment variables (takes precedence over config file):
@@ -582,6 +615,7 @@ All settings can be overridden via environment variables (takes precedence over 
 | `VAULTS3_TRUST_FORWARDED_PREFIX` | Auto-detect subpath from `X-Forwarded-Prefix` | `false` |
 | `VAULTS3_DATA_DIR` | Object storage directory | `./data` |
 | `VAULTS3_METADATA_DIR` | BoltDB metadata directory | `./metadata` |
+| `VAULTS3_DEFAULT_BUCKETS` | Comma-separated buckets to create on startup if missing | _(none)_ |
 | `VAULTS3_ENCRYPTION_KEY` | 64-char hex key (enables encryption) | _(disabled)_ |
 | `VAULTS3_TLS_CERT` | TLS certificate file path | _(disabled)_ |
 | `VAULTS3_TLS_KEY` | TLS private key file path | _(disabled)_ |
@@ -614,11 +648,16 @@ Deploy with the bundled **Helm chart** or a single **plain-manifest** quickstart
 # Helm (configurable, production-grade)
 helm install vaults3 ./deploy/helm/vaults3 \
   --namespace vaults3 --create-namespace \
-  --set auth.secretKey="$(openssl rand -hex 20)"
+  --set auth.secretKey="$(openssl rand -hex 20)" \
+  --set defaultBuckets="{app-data,backups}"
 
 # Or plain manifests (single-node, no Helm)
 kubectl apply -f deploy/k8s/quickstart.yaml
 ```
+
+`defaultBuckets` creates those buckets on startup if they are missing, so the
+release needs no init container to become usable. See
+[Buckets on First Start](#buckets-on-first-start).
 
 Both deploy a StatefulSet (S3 API + dashboard on port `9000`), admin keys via a
 Secret, `vaults3.yaml` via a ConfigMap, persistent volumes for `/data` and

@@ -202,3 +202,37 @@ func TestApplyEnvOverrides_Cluster(t *testing.T) {
 		t.Fatalf("peers not parsed/trimmed: %v", c.Peers)
 	}
 }
+
+func TestDefaultBucketsEnvOverride(t *testing.T) {
+	t.Setenv("VAULTS3_DEFAULT_BUCKETS", " app-data , backups,, my.bucket ")
+	cfg := &Config{}
+	cfg.Storage.DefaultBuckets = []string{"from-yaml"}
+	applyEnvOverrides(cfg)
+
+	got := cfg.Storage.DefaultBuckets
+	want := []string{"app-data", "backups", "my.bucket"}
+	if len(got) != len(want) {
+		t.Fatalf("default_buckets = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("default_buckets = %v, want %v", got, want)
+		}
+	}
+}
+
+// The YAML list is normalised the same way, and an unset env var must not wipe it.
+func TestDefaultBucketsFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vaults3.yaml")
+	if err := os.WriteFile(path, []byte("storage:\n  default_buckets:\n    - \" app-data \"\n    - backups\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Storage.DefaultBuckets) != 2 || cfg.Storage.DefaultBuckets[0] != "app-data" {
+		t.Fatalf("default_buckets = %v", cfg.Storage.DefaultBuckets)
+	}
+}

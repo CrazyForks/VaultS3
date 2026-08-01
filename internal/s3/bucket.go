@@ -1090,27 +1090,34 @@ func (h *BucketHandler) GetBucketLogging(w http.ResponseWriter, r *http.Request,
 }
 
 func isValidBucketName(name string) bool {
+	return ValidateBucketName(name) == nil
+}
+
+// ValidateBucketName checks a bucket name against the S3 naming rules and says
+// which rule it broke, so callers outside the S3 API (the startup bucket
+// bootstrap, issue #45) can report something more useful than "invalid".
+func ValidateBucketName(name string) error {
 	if len(name) < 3 || len(name) > 63 {
-		return false
+		return fmt.Errorf("must be between 3 and 63 characters long")
 	}
 	// Must start and end with letter or digit
 	first, last := name[0], name[len(name)-1]
 	if !isAlphaNum(first) || !isAlphaNum(last) {
-		return false
+		return fmt.Errorf("must start and end with a lowercase letter or digit")
 	}
 	// No consecutive dots, no ".." path traversal
 	prev := byte(0)
 	for i := 0; i < len(name); i++ {
 		c := name[i]
 		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.') {
-			return false
+			return fmt.Errorf("may only contain lowercase letters, digits, hyphens and dots")
 		}
 		if c == '.' && prev == '.' {
-			return false // no consecutive dots
+			return fmt.Errorf("must not contain consecutive dots")
 		}
 		prev = c
 	}
-	return true
+	return nil
 }
 
 func isAlphaNum(c byte) bool {

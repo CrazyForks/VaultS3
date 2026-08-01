@@ -28,6 +28,13 @@ server:
 storage:
   data_dir: "./data"
   metadata_dir: "./metadata"
+  # Buckets created on startup if they are missing, so a container deployment does
+  # not need an init container or an S3 client just to get its first bucket.
+  # Existing buckets are never touched, and removing a name here deletes nothing.
+  # An invalid name stops startup. This says "these buckets must exist", so a
+  # bucket deleted while still listed here comes back empty on the next restart.
+  # (env: VAULTS3_DEFAULT_BUCKETS=app-data,backups)
+  default_buckets: []
 
 auth:
   admin_access_key: "vaults3-admin"

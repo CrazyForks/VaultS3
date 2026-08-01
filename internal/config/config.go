@@ -293,6 +293,11 @@ type TLSConfig struct {
 type StorageConfig struct {
 	DataDir     string `yaml:"data_dir"`
 	MetadataDir string `yaml:"metadata_dir"`
+	// Buckets to create on startup if they do not exist yet, so a container
+	// deployment needs no init container or S3 client just to get its first
+	// bucket (issue #45). Existing buckets are left untouched.
+	// (env: VAULTS3_DEFAULT_BUCKETS, comma-separated)
+	DefaultBuckets []string `yaml:"default_buckets"`
 }
 
 type AuthConfig struct {
@@ -456,6 +461,10 @@ func Load(path string) (*Config, error) {
 	// Apply environment variable overrides
 	applyEnvOverrides(cfg)
 
+	// A YAML list can carry stray whitespace, and the env form accepts both "a,b"
+	// and "a, b" — normalise the startup bucket list from whichever source it came.
+	cfg.Storage.DefaultBuckets = splitList(strings.Join(cfg.Storage.DefaultBuckets, ","))
+
 	// Validate encryption config
 	if cfg.Encryption.Enabled {
 		if _, err := cfg.Encryption.KeyBytes(); err != nil {
@@ -511,6 +520,10 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("VAULTS3_METADATA_DIR"); v != "" {
 		cfg.Storage.MetadataDir = v
 	}
+	// Comma-separated, e.g. VAULTS3_DEFAULT_BUCKETS=app-data,backups
+	if v := os.Getenv("VAULTS3_DEFAULT_BUCKETS"); v != "" {
+		cfg.Storage.DefaultBuckets = splitList(v)
+	}
 	if v := os.Getenv("VAULTS3_ENCRYPTION_KEY"); v != "" {
 		cfg.Encryption.Enabled = true
 		cfg.Encryption.Key = v
@@ -556,14 +569,20 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Cluster.Secret = v
 	}
 	if v := os.Getenv("VAULTS3_CLUSTER_PEERS"); v != "" {
-		var peers []string
-		for _, p := range strings.Split(v, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				peers = append(peers, p)
-			}
-		}
-		cfg.Cluster.Peers = peers
+		cfg.Cluster.Peers = splitList(v)
 	}
+}
+
+// splitList parses a comma-separated environment variable into a trimmed list,
+// dropping empty entries so "a, b," yields two items.
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (c *Config) ListenAddr() string {

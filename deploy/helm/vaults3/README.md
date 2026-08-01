@@ -38,6 +38,7 @@ kubectl -n vaults3 port-forward svc/vaults3 9000:9000
 | `auth.existingSecret` | `""` | Use your own Secret (keys `access-key`, `secret-key`). |
 | `config` | single-node config | The `vaults3.yaml` mounted at `/etc/vaults3/`. Replace to enable encryption/replication/erasure/etc. |
 | `existingConfigMap` | `""` | Use your own ConfigMap (key `vaults3.yaml`). |
+| `defaultBuckets` | `[]` | Buckets created on startup if missing (e.g. `{app-data,backups}`). Existing buckets are untouched; an invalid name stops the pod. |
 | `controller.kind` | `StatefulSet` | `StatefulSet` (default. Required for clustering/multi-replica) or `Deployment` (single-node, standalone PVCs). |
 | `persistence.enabled` | `true` | Keep enabled for real use. |
 | `persistence.data.size` | `50Gi` | Object-data PVC size. |

@@ -93,6 +93,10 @@ spec:
               value: /data
             - name: VAULTS3_METADATA_DIR
               value: /metadata
+            {{- with .Values.defaultBuckets }}
+            - name: VAULTS3_DEFAULT_BUCKETS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- if .Values.cluster.enabled }}
             - name: POD_IP
               valueFrom:

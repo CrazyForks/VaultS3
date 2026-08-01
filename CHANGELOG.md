@@ -6,6 +6,37 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.45] - 2026-08-01
+### Added
+- **Buckets can be created on startup from configuration** (issue #45, requested
+  by beeyev), so a container deployment no longer needs an init container or a
+  separate S3 client just to get its first bucket:
+  `VAULTS3_DEFAULT_BUCKETS=app-data,backups`, or `storage.default_buckets` in
+  `vaults3.yaml`, or `defaultBuckets` in the Helm chart.
+  - Missing buckets are created through the same metadata and storage path as
+    `PUT /{bucket}`, so they are ordinary buckets in every respect.
+  - A bucket that already exists is left completely alone, and removing a name
+    from the list deletes nothing, so the setting is safe to leave in place across
+    restarts and upgrades. The setting means "these buckets must exist", so
+    deleting a bucket whose name is still listed brings it back, empty, on the
+    next restart.
+  - An invalid bucket name stops startup before anything is created, with an error
+    naming the bucket and the rule it broke. A create that fails stops startup too,
+    rather than letting the deployment come up quietly missing a bucket its
+    workload expects.
+  - On a cluster the creation is a replicated write like any other, so several
+    nodes booting with the same setting converge on one bucket. A node that starts
+    before the cluster has a leader waits and retries instead of failing.
+  - Verified in Docker: a fresh container; a restart with one bucket added and one
+    removed, leaving a manually created bucket and its objects intact; four kinds
+    of invalid name and a read-only data directory (all exit non-zero with a
+    message naming the bucket and the cause); a startup-created bucket taking
+    versioning, a policy, object versions and a delete like any other; and a 3-node
+    cluster where every node reported the buckets and served reads and writes for
+    them, including a node started before any leader existed and one that could
+    never reach a quorum.
+  - Helm chart 0.1.5 (`defaultBuckets`), appVersion 4.4.45.
+
 ## [4.4.44] - 2026-07-31
 ### Added
 - **Erasure coding and replica count can now be set per bucket** (issue #39,
@@ -26,7 +57,10 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
     were written with, which is safe because reads detect an object's layout from
     the object itself, so a bucket may hold both kinds at once. Lowering a replica
     count leaves surplus copies on nodes that are no longer holders; those are
-    reclaimed when the object is deleted or a rebalance runs.
+    reclaimed when the object is deleted or a rebalance runs. Verified on a live
+    cluster by moving a bucket through both settings in both directions and
+    re-reading every object from every node after each change (224 reads, none
+    became unreadable).
   - A bucket that opts out of erasure coding also skips the whole-object buffering
     that encoding requires, so its writes stream straight to disk.
 
@@ -1247,7 +1281,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...HEAD
+[4.4.45]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...v4.4.45
 [4.4.44]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...v4.4.44
 [4.4.43]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...v4.4.43
 [4.4.42]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.41...v4.4.42

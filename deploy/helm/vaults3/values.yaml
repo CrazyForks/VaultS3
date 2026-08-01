@@ -18,7 +18,7 @@ replicaCount: 1
 
 image:
   repository: eniz1806/vaults3
-  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.44")
+  # Defaults to the chart's appVersion when empty. Pin to a tag (e.g. "4.4.45")
   # for reproducible deploys; "latest" follows main.
   tag: ""
   pullPolicy: IfNotPresent
@@ -61,6 +61,13 @@ config: |
     enabled: true
     requests_per_sec: 200
     burst_size: 400
+
+# Buckets created on startup if they are missing, so the release needs no init
+# container or S3 client to get its first bucket. Existing buckets are left
+# untouched; an invalid name stops the pod with a clear error.
+defaultBuckets: []
+  # - app-data
+  # - backups
 
 service:
   type: ClusterIP

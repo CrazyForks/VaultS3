@@ -61,6 +61,7 @@ S3 API: `http://localhost:9000`
 | `VAULTS3_DOMAIN` | Domain for virtual-hosted URLs | _(empty)_ |
 | `VAULTS3_DATA_DIR` | Object storage directory | `/data` |
 | `VAULTS3_METADATA_DIR` | BoltDB metadata directory | `/metadata` |
+| `VAULTS3_DEFAULT_BUCKETS` | Comma-separated buckets to create on startup if missing | _(none)_ |
 | `VAULTS3_ENCRYPTION_KEY` | 64-char hex key (enables SSE-S3) | _(disabled)_ |
 | `VAULTS3_TLS_CERT` | TLS certificate path | _(disabled)_ |
 | `VAULTS3_TLS_KEY` | TLS private key path | _(disabled)_ |

@@ -1209,6 +1209,17 @@ func (s *Server) Run() error {
 
 	slog.Info("search index ready", "objects", s.searchIndex.Count())
 
+	// Pre-create the buckets listed in storage.default_buckets /
+	// VAULTS3_DEFAULT_BUCKETS (issue #45). Deliberately ahead of every listener:
+	// on a single node this finishes before anything can be served, so a client
+	// never sees the server accepting requests without the buckets it declared.
+	// (Clustered, it returns immediately and finishes in the background — the
+	// Raft write it needs cannot commit until the cluster has a leader.)
+	bucketErrCh := make(chan error, 1)
+	if err := s.startDefaultBuckets(bucketErrCh); err != nil {
+		return err
+	}
+
 	// Start separate inter-node listener if configured
 	var interNodeServer *http.Server
 	if s.cfg.Server.InterNodePort > 0 && s.clusterNode != nil {
@@ -1292,6 +1303,8 @@ func (s *Server) Run() error {
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("server error: %w", err)
+	case err := <-bucketErrCh:
+		return err
 	case sig := <-sigCh:
 		slog.Info("received signal, shutting down", "signal", sig)
 	}
