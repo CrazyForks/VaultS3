@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { listKeys, createKey, deleteKey, type AccessKey, type CreatedKey } from '../api/keys'
 import { listBuckets, type Bucket } from '../api/buckets'
 import { useToast } from '../hooks/useToast'
@@ -7,6 +8,7 @@ type SortField = 'accessKey' | 'createdAt' | 'type'
 type SortDir = 'asc' | 'desc'
 
 export default function AccessKeysPage() {
+  const { t } = useI18n()
   const [keys, setKeys] = useState<AccessKey[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -29,7 +31,7 @@ export default function AccessKeysPage() {
       const data = await listKeys()
       setKeys(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load keys')
+      setError(err instanceof Error ? err.message : t('keys.failedToLoadKeys'))
     } finally {
       setLoading(false)
     }
@@ -51,7 +53,7 @@ export default function AccessKeysPage() {
 
   const handleCreate = async () => {
     if (!newUserId.trim()) {
-      addToast('error', 'User ID is required')
+      addToast('error', t('keys.userIdIsRequired'))
       return
     }
     setCreating(true)
@@ -60,10 +62,10 @@ export default function AccessKeysPage() {
       const key = await createKey(newUserId.trim(), selectedBuckets)
       setShowCreateModal(false)
       setNewKey(key)
-      addToast('success', 'Access key created')
+      addToast('success', t('keys.accessKeyCreated'))
       fetchKeys()
     } catch (err) {
-      addToast('error', err instanceof Error ? err.message : 'Failed to create key')
+      addToast('error', err instanceof Error ? err.message : t('keys.failedToCreateKey'))
     } finally {
       setCreating(false)
     }
@@ -80,10 +82,10 @@ export default function AccessKeysPage() {
     try {
       await deleteKey(accessKey)
       setDeleteTarget(null)
-      addToast('success', 'Access key revoked')
+      addToast('success', t('keys.accessKeyRevoked'))
       fetchKeys()
     } catch (err) {
-      addToast('error', err instanceof Error ? err.message : 'Failed to delete key')
+      addToast('error', err instanceof Error ? err.message : t('keys.failedToDeleteKey'))
     }
   }
 
@@ -142,14 +144,14 @@ export default function AccessKeysPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Access Keys</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Manage S3 API access keys</p>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('accesskeys.accessKeys')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('accesskeys.manageS3ApiAccessKeys')}</p>
         </div>
         <button
           onClick={openCreateModal}
           className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
         >
-          Create Key
+          {t('accesskeys.createKey')}
         </button>
       </div>
 
@@ -163,25 +165,25 @@ export default function AccessKeysPage() {
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Create Access Key</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{t('accesskeys.createAccessKey')}</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">User ID <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('keys.userId')} <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={newUserId}
                   onChange={e => setNewUserId(e.target.value)}
-                  placeholder="e.g. app-user, backup-agent"
+                  placeholder={t('accesskeys.eGAppUserBackupAgent')}
                   className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                   autoFocus
                   onKeyDown={e => { if (e.key === 'Enter' && newUserId.trim()) handleCreate() }}
                 />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">An IAM user will be auto-created if it doesn't exist.</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('accesskeys.anIamUserWillBeAuto')}</p>
               </div>
               {buckets.length > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bucket Access <span className="text-xs font-normal text-gray-500">(optional)</span></label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Leave empty for full S3 access, or select specific buckets.</p>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('keys.bucketAccess')} <span className="text-xs font-normal text-gray-500">(optional)</span></label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('accesskeys.leaveEmptyForFullS3Access')}</p>
                   <div className="max-h-40 overflow-y-auto space-y-1 border border-gray-200 dark:border-gray-600 rounded-lg p-2">
                     {buckets.map(b => (
                       <label key={b.name} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
@@ -203,14 +205,14 @@ export default function AccessKeysPage() {
                 onClick={() => setShowCreateModal(false)}
                 className="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                Cancel
+                {t('accesskeys.cancel')}
               </button>
               <button
                 onClick={handleCreate}
                 disabled={creating || !newUserId.trim()}
                 className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
               >
-                {creating ? 'Creating...' : 'Create Key'}
+                {creating ? t('keys.creating') : t('keys.createKey')}
               </button>
             </div>
           </div>
@@ -221,13 +223,13 @@ export default function AccessKeysPage() {
       {newKey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Key Created</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('accesskeys.keyCreated')}</h3>
             <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
-              Save the secret key now. It will not be shown again.
+              {t('accesskeys.saveTheSecretKeyNowIt')}
             </p>
             <div className="space-y-3 mb-4">
               <div>
-                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">Access Key</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">{t('accesskeys.accessKey')}</label>
                 <div className="flex items-center gap-2 mt-1">
                   <code className="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm text-gray-900 dark:text-white font-mono break-all">
                     {newKey.accessKey}
@@ -236,12 +238,12 @@ export default function AccessKeysPage() {
                     onClick={() => copyToClipboard(newKey.accessKey, 'access')}
                     className="px-2 py-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                   >
-                    {copied === 'access' ? 'Copied!' : 'Copy'}
+                    {copied === 'access' ? t('keys.copied') : 'Copy'}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">Secret Key</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">{t('accesskeys.secretKey')}</label>
                 <div className="flex items-center gap-2 mt-1">
                   <code className="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm text-gray-900 dark:text-white font-mono break-all">
                     {newKey.secretKey}
@@ -250,7 +252,7 @@ export default function AccessKeysPage() {
                     onClick={() => copyToClipboard(newKey.secretKey, 'secret')}
                     className="px-2 py-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                   >
-                    {copied === 'secret' ? 'Copied!' : 'Copy'}
+                    {copied === 'secret' ? t('keys.copied') : 'Copy'}
                   </button>
                 </div>
               </div>
@@ -260,7 +262,7 @@ export default function AccessKeysPage() {
                 onClick={() => setNewKey(null)}
                 className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
               >
-                Done
+                {t('accesskeys.done')}
               </button>
             </div>
           </div>
@@ -271,22 +273,22 @@ export default function AccessKeysPage() {
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-sm mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Delete Key</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('accesskeys.deleteKey')}</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Are you sure you want to revoke key <strong className="font-mono">{deleteTarget}</strong>?
+              {t('keys.revokeConfirm')} <strong className="font-mono">{deleteTarget}</strong>?
             </p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setDeleteTarget(null)}
                 className="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                Cancel
+                {t('accesskeys.cancel')}
               </button>
               <button
                 onClick={() => handleDelete(deleteTarget)}
                 className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
               >
-                Revoke
+                {t('accesskeys.revoke')}
               </button>
             </div>
           </div>
@@ -298,11 +300,11 @@ export default function AccessKeysPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
-              <SortHeader field="accessKey" label="Access Key" />
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Secret</th>
-              <SortHeader field="createdAt" label="Created" />
-              <SortHeader field="type" label="Type" />
-              <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+              <SortHeader field="accessKey" label={t('accesskeys.accessKey')} />
+              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('accesskeys.secret')}</th>
+              <SortHeader field="createdAt" label={t('accesskeys.created')} />
+              <SortHeader field="type" label={t('accesskeys.type')} />
+              <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('accesskeys.actions')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -311,16 +313,16 @@ export default function AccessKeysPage() {
                 <td className="px-4 py-3 font-mono text-gray-900 dark:text-white">{k.accessKey}</td>
                 <td className="px-4 py-3 font-mono text-gray-500 dark:text-gray-400">{k.maskedSecret}</td>
                 <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                  {k.createdAt ? new Date(k.createdAt).toLocaleDateString() : 'Built-in'}
+                  {k.createdAt ? new Date(k.createdAt).toLocaleDateString() : t('keys.builtIn')}
                 </td>
                 <td className="px-4 py-3">
                   {k.isAdmin ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                      Admin
+                      {t('accesskeys.admin')}
                     </span>
                   ) : (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                      Standard
+                      {t('accesskeys.standard')}
                     </span>
                   )}
                 </td>
@@ -329,7 +331,7 @@ export default function AccessKeysPage() {
                     <button
                       onClick={() => setDeleteTarget(k.accessKey)}
                       className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                      title="Revoke key"
+                      title={t('accesskeys.revokeKey')}
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useI18n } from '../i18n'
 import { getActivity, type ActivityEntry } from '../api/activity'
 
 export default function ActivityPage() {
+  const { t } = useI18n()
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -12,7 +14,7 @@ export default function ActivityPage() {
       setEntries(data)
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load activity')
+      setError(err instanceof Error ? err.message : t('activity.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -28,15 +30,15 @@ export default function ActivityPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Activity Log</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Recent S3 operations (auto-refreshes)</p>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('activity.activityLog')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('activity.recentS3OperationsAutoRefreshes')}</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
           </span>
-          <span className="text-xs text-gray-500 dark:text-gray-400">Live</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">{t('activity.live')}</span>
         </div>
       </div>
 
@@ -55,21 +57,21 @@ export default function ActivityPage() {
           <svg className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">No activity yet</p>
-          <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">S3 operations will appear here</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('activity.noActivityYet')}</p>
+          <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">{t('activity.s3OperationsWillAppearHere')}</p>
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Time</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Method</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Bucket</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Key</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider hidden md:table-cell">Size</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider hidden lg:table-cell">Client</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('activity.time')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('activity.method')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('activity.bucket')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('activity.key')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('activity.status')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider hidden md:table-cell">{t('activity.size')}</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider hidden lg:table-cell">{t('activity.client')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">

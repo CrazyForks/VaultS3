@@ -6,6 +6,34 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.46] - 2026-08-01
+### Added
+- **The dashboard is now translated** (issue #33, requested by autool). It ships
+  **English, German, French, and Simplified Chinese**, picks a language from the
+  browser on first load, and offers a switcher in the top bar that remembers the
+  choice. `<html lang>` follows the selection, so screen readers pronounce the UI
+  correctly and browsers stop offering to translate an already-translated page.
+  - All 517 user-facing strings across the 19 pages and 16 components go through
+    a translation lookup, including button labels, table headers, placeholders,
+    tooltips, empty states, toasts, and error messages.
+  - Implemented without adding a dependency: a ~120-line provider next to the
+    existing theme provider, plus one flat JSON file per language. The dashboard
+    still has three runtime dependencies.
+  - **Adding a language is one JSON file and no code**, see
+    [Translating the dashboard](CONTRIBUTING.md#translating-the-dashboard). A key
+    a translation is missing falls back to English at runtime, so a partial
+    translation never breaks the UI, and `npx vitest run` checks that every
+    shipped locale has all the English keys, none that English does not define,
+    and the same `{placeholders}` in every string.
+  - The German, French, and Chinese files were drafted without a native-speaker
+    review and corrections are welcome as PRs. Server-side messages (S3 API
+    errors, log lines) remain English.
+  - All locales are bundled up front rather than fetched on demand, which costs
+    about 17 kB gzipped for the three added languages (123 kB to 140 kB) and
+    avoids an untranslated flash on load. Worth revisiting if many more languages
+    arrive.
+  - Helm chart 0.1.6, appVersion 4.4.46.
+
 ## [4.4.45] - 2026-08-01
 ### Added
 - **Buckets can be created on startup from configuration** (issue #45, requested
@@ -1281,7 +1309,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...HEAD
+[4.4.46]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...v4.4.46
 [4.4.45]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.44...v4.4.45
 [4.4.44]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.43...v4.4.44
 [4.4.43]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.42...v4.4.43

@@ -1,5 +1,6 @@
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
+import { useI18n, LOCALES } from '../i18n'
 
 interface Props {
   onMenuToggle?: () => void
@@ -8,6 +9,7 @@ interface Props {
 export default function TopBar({ onMenuToggle }: Props) {
   const { user, logout } = useAuth()
   const { theme, toggle } = useTheme()
+  const { locale, setLocale, t } = useI18n()
 
   return (
     <header className="h-14 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4 md:px-6">
@@ -27,7 +29,7 @@ export default function TopBar({ onMenuToggle }: Props) {
         <button
           onClick={toggle}
           className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
         >
           {theme === 'dark' ? (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -39,6 +41,19 @@ export default function TopBar({ onMenuToggle }: Props) {
             </svg>
           )}
         </button>
+        <select
+          value={locale}
+          onChange={(e) => setLocale(e.target.value)}
+          title={t('topbar.language')}
+          aria-label={t('topbar.language')}
+          className="text-sm bg-transparent text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          {LOCALES.map((l) => (
+            <option key={l.code} value={l.code} className="bg-white dark:bg-gray-800">
+              {l.label}
+            </option>
+          ))}
+        </select>
         <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline">
           {user?.accessKey}
         </span>
@@ -46,7 +61,7 @@ export default function TopBar({ onMenuToggle }: Props) {
           onClick={logout}
           className="text-sm text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
         >
-          Logout
+          {t('topbar.logout')}
         </button>
       </div>
     </header>

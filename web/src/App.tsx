@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { DASHBOARD_BASE } from './basePath'
 import { AuthProvider } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
+import { I18nProvider } from './i18n'
 import { ToastProvider } from './hooks/useToast'
 import ProtectedRoute from './components/ProtectedRoute'
 import ToastContainer from './components/ToastContainer'
@@ -28,7 +29,8 @@ import OIDCCallbackPage from './pages/OIDCCallbackPage'
 
 export default function App() {
   return (
-    <ThemeProvider>
+    <I18nProvider>
+      <ThemeProvider>
       <AuthProvider>
         <ToastProvider>
         <BrowserRouter basename={DASHBOARD_BASE}>
@@ -61,6 +63,7 @@ export default function App() {
         <ToastContainer />
         </ToastProvider>
       </AuthProvider>
-    </ThemeProvider>
+      </ThemeProvider>
+    </I18nProvider>
   )
 }

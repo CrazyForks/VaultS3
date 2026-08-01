@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { listNotifications, type NotificationConfig } from '../api/notifications'
 
 type SortField = 'bucket' | 'webhookURL' | 'events'
 type SortDir = 'asc' | 'desc'
 
 export default function NotificationsPage() {
+  const { t } = useI18n()
   const [configs, setConfigs] = useState<NotificationConfig[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -16,7 +18,7 @@ export default function NotificationsPage() {
       const data = await listNotifications()
       setConfigs(data || [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load notifications')
+      setError(err instanceof Error ? err.message : t('notifications.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -72,8 +74,8 @@ export default function NotificationsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Notifications</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Event notification configurations</p>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('notifications.notifications')}</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('notifications.eventNotificationConfigurations')}</p>
       </div>
 
       {error && (
@@ -84,7 +86,7 @@ export default function NotificationsPage() {
 
       {configs.length === 0 ? (
         <div className="mb-6 p-5 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
-          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">No Notifications Configured</h3>
+          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">{t('notifications.noNotificationsConfigured')}</h3>
           <p className="text-sm text-indigo-700 dark:text-indigo-400 mb-3">
             Send webhook notifications when objects are created or deleted. Configure per-bucket via the S3 API
             or enable global backends in your <code className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 font-mono text-xs">vaults3.yaml</code> config:
@@ -104,9 +106,9 @@ export default function NotificationsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <SortHeader field="bucket" label="Bucket" />
-                <SortHeader field="webhookURL" label="Webhook URL" />
-                <SortHeader field="events" label="Events" />
+                <SortHeader field="bucket" label={t('notifications.bucket')} />
+                <SortHeader field="webhookURL" label={t('notifications.webhookUrl')} />
+                <SortHeader field="events" label={t('notifications.events')} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">

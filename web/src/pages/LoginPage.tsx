@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DASHBOARD_BASE } from '../basePath'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
+import { useI18n } from '../i18n'
 import {
   buildOIDCAuthorizeUrl,
   getOIDCConfig,
@@ -22,6 +23,7 @@ export default function LoginPage() {
   const [oidcConfig, setOidcConfig] = useState<OIDCConfigResponse | null>(null)
   const { login, loginWithOIDC, loginWithOIDCCode } = useAuth()
   const { theme, toggle } = useTheme()
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -42,11 +44,11 @@ export default function LoginPage() {
         } else if (event.data.idToken) {
           await loginWithOIDC(event.data.idToken)
         } else {
-          throw new Error(event.data.error || 'SSO login failed')
+          throw new Error(event.data.error || t('login.ssoFailed'))
         }
         navigate('/buckets', { replace: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'SSO login failed')
+        setError(err instanceof Error ? err.message : t('login.ssoFailed'))
       } finally {
         setLoading(false)
       }
@@ -66,7 +68,7 @@ export default function LoginPage() {
       setRememberedAccessKey(rememberMe ? accessKey : '')
       navigate('/buckets', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : t('login.failed'))
     } finally {
       setLoading(false)
     }
@@ -87,7 +89,7 @@ export default function LoginPage() {
         popup(authorizeUrl)
         return
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not start SSO login')
+        setError(err instanceof Error ? err.message : t('login.ssoStartFailed'))
         return
       }
     }
@@ -102,7 +104,7 @@ export default function LoginPage() {
       <button
         onClick={toggle}
         className="absolute top-4 right-4 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        title={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
       >
         {theme === 'dark' ? (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -123,7 +125,7 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">VaultS3</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Sign in to your dashboard</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg dark:shadow-2xl border border-gray-200 dark:border-gray-600 p-6 space-y-4">
@@ -135,7 +137,7 @@ export default function LoginPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Access Key
+              {t('login.accessKey')}
             </label>
             <div className="relative">
               <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
@@ -156,7 +158,7 @@ export default function LoginPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Secret Key
+              {t('login.secretKey')}
             </label>
             <div className="relative">
               <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
@@ -169,15 +171,15 @@ export default function LoginPage() {
                 value={secretKey}
                 onChange={(e) => setSecretKey(e.target.value)}
                 className="w-full pl-9 pr-9 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-                placeholder="Enter your secret key"
+                placeholder={t('login.secretKeyPlaceholder')}
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowSecretKey((prev) => !prev)}
                 className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                title={showSecretKey ? 'Hide secret key' : 'Show secret key'}
-                aria-label={showSecretKey ? 'Hide secret key' : 'Show secret key'}>
+                title={showSecretKey ? t('login.hideSecret') : t('login.showSecret')}
+                aria-label={showSecretKey ? t('login.hideSecret') : t('login.showSecret')}>
                 {showSecretKey ? (
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
@@ -198,7 +200,7 @@ export default function LoginPage() {
               onChange={(e) => setRememberMe(e.target.checked)}
               className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
             />
-            <span className="text-sm text-gray-600 dark:text-gray-400">Remember me</span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">{t('login.rememberMe')}</span>
           </label>
 
           <button
@@ -206,7 +208,7 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-2.5 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? t('login.signingIn') : t('login.signIn')}
           </button>
 
           {oidcConfig?.enabled && (
@@ -216,7 +218,7 @@ export default function LoginPage() {
                   <div className="w-full border-t border-gray-200 dark:border-gray-600"></div>
                 </div>
                 <div className="relative flex justify-center text-xs">
-                  <span className="px-2 bg-white dark:bg-gray-800 text-gray-400">or</span>
+                  <span className="px-2 bg-white dark:bg-gray-800 text-gray-400">{t('login.or')}</span>
                 </div>
               </div>
 
@@ -229,7 +231,7 @@ export default function LoginPage() {
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                 </svg>
-                Sign in with SSO
+                {t('login.signInSSO')}
               </button>
             </>
           )}

@@ -1,22 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useI18n } from '../i18n'
 import { testMigrateSource, startMigration, listMigrateJobs, cancelMigration, type MigrateJob } from '../api/migrate'
 
 // Migration works against any S3-compatible source. These presets only pre-fill a
 // sensible endpoint hint and the SigV4 region for common sources, so the fields do
 // not have to be looked up by hand. Everything is still fully editable.
-const PRESETS: Record<string, { label: string; placeholder: string; region: string; hint?: string }> = {
+const PRESETS: Record<string, { label: string; placeholder: string; region: string; hintKey?: string }> = {
   custom: { label: 'Any S3-compatible', placeholder: 'http://host:9000', region: 'us-east-1' },
   minio: { label: 'MinIO', placeholder: 'http://minio:9000', region: 'us-east-1' },
-  seaweedfs: { label: 'SeaweedFS', placeholder: 'http://seaweedfs:8333', region: 'us-east-1', hint: 'Point at the SeaweedFS S3 gateway (default port 8333).' },
-  garage: { label: 'Garage', placeholder: 'http://garage:3900', region: 'garage', hint: 'Region must match your Garage cluster config (garage.toml s3_api.s3_region), often "garage".' },
+  seaweedfs: { label: 'SeaweedFS', placeholder: 'http://seaweedfs:8333', region: 'us-east-1', hintKey: 'migrate.hintSeaweedfs' },
+  garage: { label: 'Garage', placeholder: 'http://garage:3900', region: 'garage', hintKey: 'migrate.hintGarage' },
   ceph: { label: 'Ceph RADOS Gateway', placeholder: 'http://ceph-rgw:8080', region: 'us-east-1' },
-  aws: { label: 'AWS S3', placeholder: 'https://s3.us-east-1.amazonaws.com', region: 'us-east-1', hint: 'Use the regional endpoint and its matching region.' },
-  r2: { label: 'Cloudflare R2', placeholder: 'https://<account-id>.r2.cloudflarestorage.com', region: 'auto', hint: 'R2 uses region "auto".' },
+  aws: { label: 'AWS S3', placeholder: 'https://s3.us-east-1.amazonaws.com', region: 'us-east-1', hintKey: 'migrate.hintAws' },
+  r2: { label: 'Cloudflare R2', placeholder: 'https://<account-id>.r2.cloudflarestorage.com', region: 'auto', hintKey: 'migrate.hintR2' },
   wasabi: { label: 'Wasabi', placeholder: 'https://s3.wasabisys.com', region: 'us-east-1' },
-  b2: { label: 'Backblaze B2', placeholder: 'https://s3.us-west-000.backblazeb2.com', region: 'us-west-000', hint: 'Use your bucket region, e.g. us-west-000.' },
+  b2: { label: 'Backblaze B2', placeholder: 'https://s3.us-west-000.backblazeb2.com', region: 'us-west-000', hintKey: 'migrate.hintB2' },
 }
 
 export default function MigrationPage() {
+  const { t } = useI18n()
   const [preset, setPreset] = useState('custom')
   const [endpoint, setEndpoint] = useState('')
   const [accessKey, setAccessKey] = useState('')
@@ -69,7 +71,7 @@ export default function MigrationPage() {
       setSelected(new Set(buckets || []))
       setTested(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connection failed')
+      setError(err instanceof Error ? err.message : t('migrate.connectionFailed'))
     } finally {
       setTesting(false)
     }
@@ -82,7 +84,7 @@ export default function MigrationPage() {
       await startMigration({ ...source(), buckets: Array.from(selected) })
       await refreshJobs()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not start migration')
+      setError(err instanceof Error ? err.message : t('migrate.couldNotStartMigration'))
     } finally {
       setStarting(false)
     }
@@ -96,7 +98,7 @@ export default function MigrationPage() {
       await cancelMigration(id)
       await refreshJobs()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not cancel migration')
+      setError(err instanceof Error ? err.message : t('migrate.couldNotCancelMigration'))
     } finally {
       setCancelling(prev => {
         const next = new Set(prev)
@@ -123,7 +125,7 @@ export default function MigrationPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Migrate from S3</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('migration.migrateFromS3')}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           Import buckets and objects from MinIO, SeaweedFS, Garage, Ceph, AWS S3,
           Cloudflare R2, Wasabi, Backblaze B2, or any S3-compatible source.
@@ -141,7 +143,7 @@ export default function MigrationPage() {
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">1. Source endpoint</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
-            <label className={label}>Source type</label>
+            <label className={label}>{t('migration.sourceType')}</label>
             <select className={input} value={preset} onChange={e => onPreset(e.target.value)}>
               {Object.entries(PRESETS).map(([key, p]) => (
                 <option key={key} value={key}>{p.label}</option>
@@ -149,28 +151,28 @@ export default function MigrationPage() {
             </select>
           </div>
           <div className="md:col-span-2">
-            <label className={label}>Endpoint URL</label>
+            <label className={label}>{t('migration.endpointUrl')}</label>
             <input className={input} placeholder={PRESETS[preset].placeholder} value={endpoint} onChange={e => setEndpoint(e.target.value)} />
-            {PRESETS[preset].hint && (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{PRESETS[preset].hint}</p>
+            {PRESETS[preset].hintKey && (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t(PRESETS[preset].hintKey!)}</p>
             )}
           </div>
           <div>
-            <label className={label}>Access Key</label>
+            <label className={label}>{t('migration.accessKey')}</label>
             <input className={input} value={accessKey} onChange={e => setAccessKey(e.target.value)} />
           </div>
           <div>
-            <label className={label}>Secret Key</label>
+            <label className={label}>{t('migration.secretKey')}</label>
             <input className={input} type="password" value={secretKey} onChange={e => setSecretKey(e.target.value)} />
           </div>
           <div>
-            <label className={label}>Region</label>
+            <label className={label}>{t('migration.region')}</label>
             <input className={input} value={region} onChange={e => setRegion(e.target.value)} />
           </div>
         </div>
         <button onClick={handleTest} disabled={testing || !endpoint.trim()}
           className="mt-4 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors">
-          {testing ? 'Connecting...' : 'Connect & list buckets'}
+          {testing ? t('migrate.connecting') : t('migrate.connectListBuckets')}
         </button>
       </div>
 
@@ -179,7 +181,7 @@ export default function MigrationPage() {
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-5">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">2. Select buckets to import</h3>
           {buckets.length === 0 ? (
-            <p className="text-sm text-gray-400">No buckets found on the source.</p>
+            <p className="text-sm text-gray-400">{t('migration.noBucketsFoundOnTheSource')}</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4">
               {buckets.map(b => (
@@ -192,7 +194,7 @@ export default function MigrationPage() {
           )}
           <button onClick={handleStart} disabled={starting || selected.size === 0 || sourceBusy}
             className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
-            {starting ? 'Starting...' : sourceBusy ? 'Migration in progress…' : `Migrate ${selected.size} bucket${selected.size !== 1 ? 's' : ''}`}
+            {starting ? t('migrate.starting') : sourceBusy ? t('migrate.migrationInProgress') : t('migrate.migrateN', { n: selected.size })}
           </button>
           {sourceBusy && (
             <p className="mt-2 text-xs text-gray-400">A migration from this source is already running — cancel or wait for it to finish.</p>
@@ -204,7 +206,7 @@ export default function MigrationPage() {
       {jobs.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Migrations</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('migration.migrations')}</h3>
           </div>
           <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
             {jobs.map(job => {
@@ -221,7 +223,7 @@ export default function MigrationPage() {
                           disabled={cancelling.has(job.id)}
                           className="text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 transition-colors"
                         >
-                          {cancelling.has(job.id) ? 'Cancelling…' : 'Cancel'}
+                          {cancelling.has(job.id) ? t('migrate.cancelling') : t('common.cancel')}
                         </button>
                       )}
                       <span className={`text-xs px-2 py-0.5 rounded-full ${

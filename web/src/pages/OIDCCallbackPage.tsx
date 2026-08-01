@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useI18n } from '../i18n'
 
 /**
  * Where the identity provider sends the user back.
@@ -10,7 +11,8 @@ import { useEffect, useState } from 'react'
  * so the login page can say what went wrong instead of waiting forever.
  */
 export default function OIDCCallbackPage() {
-  const [message, setMessage] = useState('Completing sign in...')
+  const { t } = useI18n()
+  const [message, setMessage] = useState(t('oidc.completing'))
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search)
@@ -22,7 +24,7 @@ export default function OIDCCallbackPage() {
     const idToken = fragment.get('id_token')
 
     if (!window.opener) {
-      setMessage('This page completes an SSO sign-in and cannot be opened directly.')
+      setMessage(t('oidc.directOpen'))
       return
     }
 
@@ -44,7 +46,7 @@ export default function OIDCCallbackPage() {
       send({ idToken })
       return
     }
-    setMessage('The identity provider returned no sign-in result.')
+    setMessage(t('oidc.noResult'))
   }, [])
 
   return (

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useI18n } from '../i18n'
 import { getVersionDiff, type DiffResult } from '../api/versions'
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function VersionDiffViewer({ bucket, objectKey, v1, v2, onClose }: Props) {
+  const { t } = useI18n()
   const [diff, setDiff] = useState<DiffResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -19,7 +21,7 @@ export default function VersionDiffViewer({ bucket, objectKey, v1, v2, onClose }
     setError('')
     getVersionDiff(bucket, objectKey, v1, v2)
       .then(setDiff)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load diff'))
+      .catch(err => setError(err instanceof Error ? err.message : t('versiondiff.loadFailed')))
       .finally(() => setLoading(false))
   }, [bucket, objectKey, v1, v2])
 
@@ -29,7 +31,7 @@ export default function VersionDiffViewer({ bucket, objectKey, v1, v2, onClose }
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Version Diff</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('versiondiff.versionDiff')}</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 font-mono">
               {v1.slice(0, 12)}... vs {v2.slice(0, 12)}...
             </p>
@@ -88,15 +90,15 @@ export default function VersionDiffViewer({ bucket, objectKey, v1, v2, onClose }
           {diff && !diff.isText && (
             <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
               <div className="px-3 py-1.5 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
-                Binary Comparison (metadata only)
+                {t('versiondiff.binaryComparisonMetadataOnly')}
               </div>
               <div className="p-4">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs text-gray-500 dark:text-gray-400">
-                      <th className="pb-2">Property</th>
-                      <th className="pb-2">Version A</th>
-                      <th className="pb-2">Version B</th>
+                      <th className="pb-2">{t('versiondiff.property')}</th>
+                      <th className="pb-2">{t('versiondiff.versionA')}</th>
+                      <th className="pb-2">{t('versiondiff.versionB')}</th>
                     </tr>
                   </thead>
                   <tbody className="text-gray-700 dark:text-gray-300">

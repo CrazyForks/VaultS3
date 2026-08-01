@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useI18n } from '../i18n'
 import { useNavigate } from 'react-router-dom'
 import { searchObjects, type SearchResult } from '../api/search'
 import { queryVectors, getVectorStatus, type VectorMatch } from '../api/vectors'
@@ -17,6 +18,7 @@ function formatSize(bytes: number): string {
 }
 
 export default function SearchPage() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [mode, setMode] = useState<Mode>('keyword')
   const [vectorEnabled, setVectorEnabled] = useState(false)
@@ -54,7 +56,7 @@ export default function SearchPage() {
         setPage(0)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed')
+      setError(err instanceof Error ? err.message : t('search.failed'))
     } finally {
       setLoading(false)
     }
@@ -113,11 +115,11 @@ export default function SearchPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Search</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('search.search')}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           {mode === 'semantic'
-            ? 'Find objects by meaning using vector embeddings'
-            : 'Search objects across all buckets by key, content type, or tag'}
+            ? t('search.semanticSubtitle')
+            : t('search.keywordSubtitle')}
         </p>
       </div>
 
@@ -127,19 +129,19 @@ export default function SearchPage() {
           onClick={() => switchMode('keyword')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'keyword' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
         >
-          Keyword
+          {t('search.keyword')}
         </button>
         <button
           onClick={() => switchMode('semantic')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'semantic' ? 'bg-white dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
         >
-          Semantic <span className="text-[10px] align-top text-emerald-500">AI</span>
+          {t('search.semantic')} <span className="text-[10px] align-top text-emerald-500">{t('search.ai')}</span>
         </button>
       </div>
 
       {mode === 'semantic' && !vectorEnabled && (
         <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm">
-          Semantic search is not enabled. Set <code className="font-mono">vector.enabled: true</code> and an embedding endpoint in your config to use it.
+          {t('search.semanticDisabled1')} <code className="font-mono">vector.enabled: true</code> {t('search.semanticDisabled2')}
         </div>
       )}
 
@@ -152,16 +154,16 @@ export default function SearchPage() {
       {/* Search bar */}
       <div className="flex gap-3 mb-6">
         <input type="text"
-          placeholder={mode === 'semantic' ? 'Describe what you are looking for...' : 'Search by key, content type, or tag...'}
+          placeholder={mode === 'semantic' ? t('search.semanticPlaceholder') : t('search.keywordPlaceholder')}
           value={query} onChange={e => setQuery(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSearch()}
           className="flex-1 px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm" />
-        <input type="text" placeholder="Bucket (optional)" value={bucket}
+        <input type="text" placeholder={t('search.bucketOptional')} value={bucket}
           onChange={e => setBucket(e.target.value)}
           className="w-44 px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm" />
         <button onClick={handleSearch} disabled={loading || !query.trim() || (mode === 'semantic' && !vectorEnabled)}
           className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors">
-          {loading ? 'Searching...' : 'Search'}
+          {loading ? t('search.searching') : t('search.search')}
         </button>
       </div>
 
@@ -175,9 +177,9 @@ export default function SearchPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Bucket</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Key</th>
-                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Similarity</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('search.bucket')}</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('search.key')}</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('search.similarity')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -198,7 +200,7 @@ export default function SearchPage() {
                   </tr>
                 ))}
                 {semanticResults.length === 0 && (
-                  <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400">No matches found</td></tr>
+                  <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400">{t('search.noMatchesFound')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -217,11 +219,11 @@ export default function SearchPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-gray-700">
-                    <SortHeader field="bucket" label="Bucket" />
-                    <SortHeader field="key" label="Key" />
-                    <SortHeader field="size" label="Size" />
-                    <SortHeader field="content_type" label="Content Type" />
-                    <SortHeader field="last_modified" label="Last Modified" />
+                    <SortHeader field="bucket" label={t('search.bucket')} />
+                    <SortHeader field="key" label={t('search.key')} />
+                    <SortHeader field="size" label={t('search.size')} />
+                    <SortHeader field="content_type" label={t('search.contentType')} />
+                    <SortHeader field="last_modified" label={t('search.lastModified')} />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -239,7 +241,7 @@ export default function SearchPage() {
                     </tr>
                   ))}
                   {results.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No results found</td></tr>
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">{t('search.noResultsFound')}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -258,14 +260,14 @@ export default function SearchPage() {
                   disabled={page === 0}
                   className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  Prev
+                  {t('search.prev')}
                 </button>
                 <button
                   onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                   disabled={page >= totalPages - 1}
                   className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  Next
+                  {t('search.next')}
                 </button>
               </div>
             </div>

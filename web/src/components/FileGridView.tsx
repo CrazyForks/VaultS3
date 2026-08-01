@@ -1,4 +1,5 @@
 import type { ObjectItem } from '../api/objects'
+import { useI18n } from '../i18n'
 import FileTypeIcon from './FileTypeIcon'
 import CopyButton from './CopyButton'
 
@@ -31,6 +32,7 @@ export default function FileGridView({
   displayName,
   formatSize,
 }: Props) {
+  const { t } = useI18n()
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
       {objects.map(obj => {
@@ -72,7 +74,7 @@ export default function FileGridView({
                 <a
                   href={getDownloadUrl(bucket, obj.key)}
                   className="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                  title="Download"
+                  title={t('filegridview.download')}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -81,7 +83,7 @@ export default function FileGridView({
                 <button
                   onClick={() => onDeleteRequest(obj.key)}
                   className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                  title="Delete"
+                  title={t('filegridview.delete')}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

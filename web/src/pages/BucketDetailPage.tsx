@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useI18n } from '../i18n'
 import { useParams, Link } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
 import SnapshotsPanel from '../components/SnapshotsPanel'
@@ -12,6 +13,7 @@ import {
 } from '../api/buckets'
 
 export default function BucketDetailPage() {
+  const { t } = useI18n()
   const { name } = useParams<{ name: string }>()
   const [bucket, setBucket] = useState<Bucket | null>(null)
   const [loading, setLoading] = useState(true)
@@ -82,7 +84,7 @@ export default function BucketDetailPage() {
           })
           .catch(() => {})
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load bucket'))
+      .catch((err) => setError(err instanceof Error ? err.message : t('bucket.loadFailed')))
       .finally(() => setLoading(false))
   }, [name])
 
@@ -93,10 +95,10 @@ export default function BucketDetailPage() {
     setSavingQuota(true); setError('')
     try {
       await setBucketQuota(name, Number(maxSizeBytes) || 0, Number(maxObjects) || 0)
-      flash('Quota updated')
+      flash(t('bucket.quotaUpdated'))
       setBucket(await getBucket(name))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update quota')
+      setError(err instanceof Error ? err.message : t('bucket.quotaFailed'))
     } finally { setSavingQuota(false) }
   }
 
@@ -105,10 +107,10 @@ export default function BucketDetailPage() {
     setSavingPolicy(true); setError('')
     try {
       await setBucketPolicy(name, policyText)
-      flash('Policy updated')
+      flash(t('bucket.policyUpdated'))
       setBucket(await getBucket(name))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update policy')
+      setError(err instanceof Error ? err.message : t('bucket.policyFailed'))
     } finally { setSavingPolicy(false) }
   }
 
@@ -119,9 +121,9 @@ export default function BucketDetailPage() {
     try {
       await setBucketVersioning(name, next)
       setVersioning(next)
-      flash(`Versioning ${next.toLowerCase()}`)
+      flash(next === 'Enabled' ? t('bucket.versioningEnabled') : t('bucket.versioningSuspended'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update versioning')
+      setError(err instanceof Error ? err.message : t('bucket.versioningFailed'))
     } finally { setSavingVersioning(false) }
   }
 
@@ -137,9 +139,9 @@ export default function BucketDetailPage() {
       }
       await setLifecycleRule(name, rule)
       setLifecycleRuleState(rule)
-      flash('Lifecycle rule saved')
+      flash(t('bucket.lifecycleSaved'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save lifecycle rule')
+      setError(err instanceof Error ? err.message : t('bucket.lifecycleSaveFailed'))
     } finally { setSavingLifecycle(false) }
   }
 
@@ -150,9 +152,9 @@ export default function BucketDetailPage() {
       await deleteLifecycleRule(name)
       setLifecycleRuleState(null)
       setLcExpDays(''); setLcPrefix(''); setLcStatus('Enabled')
-      flash('Lifecycle rule removed')
+      flash(t('bucket.lifecycleRemoved'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete lifecycle rule')
+      setError(err instanceof Error ? err.message : t('bucket.lifecycleDeleteFailed'))
     } finally { setSavingLifecycle(false) }
   }
 
@@ -165,7 +167,7 @@ export default function BucketDetailPage() {
       setCorsRules(rules)
       flash('CORS configuration saved')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save CORS config')
+      setError(err instanceof Error ? err.message : t('bucket.corsSaveFailed'))
     } finally { setSavingCors(false) }
   }
 
@@ -177,7 +179,7 @@ export default function BucketDetailPage() {
       setCorsRules([]); setCorsText('')
       flash('CORS configuration removed')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete CORS config')
+      setError(err instanceof Error ? err.message : t('bucket.corsDeleteFailed'))
     } finally { setSavingCors(false) }
   }
 
@@ -190,14 +192,14 @@ export default function BucketDetailPage() {
   }
 
   if (!bucket) {
-    return <div className="text-red-600 dark:text-red-400">{error || 'Bucket not found'}</div>
+    return <div className="text-red-600 dark:text-red-400">{error || t('bucket.notFound')}</div>
   }
 
   return (
     <div className="max-w-3xl">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-4">
-        <Link to="/buckets" className="hover:text-indigo-600 dark:hover:text-indigo-400">Buckets</Link>
+        <Link to="/buckets" className="hover:text-indigo-600 dark:hover:text-indigo-400">{t('nav.buckets')}</Link>
         <span>/</span>
         <span className="text-gray-900 dark:text-white font-medium">{bucket.name}</span>
       </div>
@@ -208,7 +210,7 @@ export default function BucketDetailPage() {
           to={`/buckets/${bucket.name}/files`}
           className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
         >
-          Browse Files
+          {t('bucket.browseFiles')}
         </Link>
       </div>
 
@@ -220,10 +222,10 @@ export default function BucketDetailPage() {
 
       {/* Info cards */}
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <InfoCard label="Objects" value={String(bucket.objectCount)} />
-        <InfoCard label="Size" value={formatSize(bucket.size)} />
-        <InfoCard label="Created" value={formatDate(bucket.createdAt)} />
-        <InfoCard label="Quota" value={bucket.maxSizeBytes ? formatSize(bucket.maxSizeBytes) : 'Unlimited'} />
+        <InfoCard label={t('home.objects')} value={String(bucket.objectCount)} />
+        <InfoCard label={t('common.size')} value={formatSize(bucket.size)} />
+        <InfoCard label={t('common.created')} value={formatDate(bucket.createdAt)} />
+        <InfoCard label={t('bucket.quota')} value={bucket.maxSizeBytes ? formatSize(bucket.maxSizeBytes) : t('bucket.unlimited')} />
       </div>
 
       {/* Versioning indicator */}
@@ -233,29 +235,29 @@ export default function BucketDetailPage() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <div className="flex-1">
-            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">Versioning Enabled</p>
-            <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70">Object versions are tracked. View version history in the file browser.</p>
+            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">{t('bucket.versioningOn')}</p>
+            <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70">{t('bucket.versioningOnHint')}</p>
           </div>
           <Link
             to={`/buckets/${bucket.name}/files`}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-colors flex-shrink-0"
           >
-            Browse Files
+            {t('bucket.browseFiles')}
           </Link>
         </div>
       )}
 
       {/* Versioning toggle */}
-      <Section title="Versioning">
+      <Section title={t('bucket.versioning')}>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300">
-              Status: <span className={`font-medium ${versioning === 'Enabled' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                {versioning || 'Not configured'}
+              {t('bucket.statusLabel')} <span className={`font-medium ${versioning === 'Enabled' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                {versioning || t('bucket.notConfigured')}
               </span>
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              When enabled, objects are versioned on each update.
+              {t('bucket.versioningHint')}
             </p>
           </div>
           <button
@@ -273,10 +275,10 @@ export default function BucketDetailPage() {
       </Section>
 
       {/* Lifecycle rule editor */}
-      <Section title="Lifecycle Rule">
+      <Section title={t('bucket.lifecycle')}>
         <div className="grid grid-cols-4 gap-4 mb-3">
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Expiration (days)</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('bucket.expirationDays')}</label>
             <input
               type="number"
               value={lcExpDays}
@@ -286,7 +288,7 @@ export default function BucketDetailPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1" title="Abort incomplete multipart uploads older than this many days">Abort uploads (days)</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1" title={t('bucket.abortUploadsHint')}>{t('bucket.abortUploads')}</label>
             <input
               type="number"
               value={lcAbortDays}
@@ -296,7 +298,7 @@ export default function BucketDetailPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Key Prefix</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('bucket.keyPrefix')}</label>
             <input
               type="text"
               value={lcPrefix}
@@ -306,14 +308,14 @@ export default function BucketDetailPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Status</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('common.status')}</label>
             <select
               value={lcStatus}
               onChange={e => setLcStatus(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
             >
-              <option value="Enabled">Enabled</option>
-              <option value="Disabled">Disabled</option>
+              <option value="Enabled">{t('common.enabled')}</option>
+              <option value="Disabled">{t('common.disabled')}</option>
             </select>
           </div>
         </div>
@@ -323,7 +325,7 @@ export default function BucketDetailPage() {
             disabled={savingLifecycle || (!lcExpDays && !lcAbortDays)}
             className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
           >
-            {savingLifecycle ? 'Saving...' : 'Save Rule'}
+            {savingLifecycle ? t('common.saving') : t('bucket.saveRule')}
           </button>
           {lifecycleRule && (
             <button
@@ -331,14 +333,14 @@ export default function BucketDetailPage() {
               disabled={savingLifecycle}
               className="px-4 py-2 rounded-lg border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm font-medium transition-colors"
             >
-              Remove
+              {t('bucket.remove')}
             </button>
           )}
         </div>
       </Section>
 
       {/* CORS editor */}
-      <Section title="CORS Configuration">
+      <Section title={t('bucket.cors')}>
         <textarea
           value={corsText}
           onChange={e => setCorsText(e.target.value)}
@@ -352,7 +354,7 @@ export default function BucketDetailPage() {
             disabled={savingCors}
             className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
           >
-            {savingCors ? 'Saving...' : 'Save CORS'}
+            {savingCors ? t('common.saving') : t('bucket.saveCors')}
           </button>
           {corsRules.length > 0 && (
             <button
@@ -360,33 +362,33 @@ export default function BucketDetailPage() {
               disabled={savingCors}
               className="px-4 py-2 rounded-lg border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm font-medium transition-colors"
             >
-              Remove
+              {t('bucket.remove')}
             </button>
           )}
         </div>
       </Section>
 
       {/* Quota editor */}
-      <Section title="Quota">
+      <Section title={t('bucket.quota')}>
         <div className="grid grid-cols-2 gap-4 mb-3">
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Max Size (bytes)</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('bucket.maxSize')}</label>
             <input
               type="number"
               value={maxSizeBytes}
               onChange={(e) => setMaxSizeBytes(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-              placeholder="0 = unlimited"
+              placeholder={t('bucket.zeroUnlimited')}
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Max Objects</label>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('bucket.maxObjects')}</label>
             <input
               type="number"
               value={maxObjects}
               onChange={(e) => setMaxObjects(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-              placeholder="0 = unlimited"
+              placeholder={t('bucket.zeroUnlimited')}
             />
           </div>
         </div>
@@ -395,12 +397,12 @@ export default function BucketDetailPage() {
           disabled={savingQuota}
           className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
         >
-          {savingQuota ? 'Saving...' : 'Save Quota'}
+          {savingQuota ? t('common.saving') : t('bucket.saveQuota')}
         </button>
       </Section>
 
       {/* Policy editor */}
-      <Section title="Bucket Policy">
+      <Section title={t('bucket.policy')}>
         <textarea
           value={policyText}
           onChange={(e) => setPolicyText(e.target.value)}
@@ -413,7 +415,7 @@ export default function BucketDetailPage() {
           disabled={savingPolicy || !policyText.trim()}
           className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors"
         >
-          {savingPolicy ? 'Saving...' : 'Save Policy'}
+          {savingPolicy ? t('common.saving') : t('bucket.savePolicy')}
         </button>
       </Section>
 

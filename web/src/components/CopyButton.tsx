@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useI18n } from '../i18n'
 
 interface Props {
   text: string
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function CopyButton({ text, label, className = '' }: Props) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
@@ -33,7 +35,7 @@ export default function CopyButton({ text, label, className = '' }: Props) {
   return (
     <button
       onClick={handleCopy}
-      title={copied ? 'Copied!' : `Copy ${label || 'to clipboard'}`}
+      title={copied ? t('copy.copiedBang') : t('copy.copy', { what: label || t('copy.toClipboard') })}
       className={`inline-flex items-center gap-1 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors ${className}`}
     >
       {copied ? (
@@ -45,7 +47,7 @@ export default function CopyButton({ text, label, className = '' }: Props) {
           <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
         </svg>
       )}
-      {label && <span className="text-xs">{copied ? 'Copied' : label}</span>}
+      {label && <span className="text-xs">{copied ? t('copy.copied') : label}</span>}
     </button>
   )
 }

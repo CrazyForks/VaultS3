@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { getTCO, type TcoProvider } from '../api/tco'
 
 function usd(n: number): string {
@@ -19,6 +20,7 @@ const PRESETS = [
 ]
 
 export default function CostPage() {
+  const { t } = useI18n()
   const [rates, setRates] = useState<TcoProvider[]>([])
   const [liveGb, setLiveGb] = useState(0)
   const [storageGb, setStorageGb] = useState(0)
@@ -37,7 +39,7 @@ export default function CostPage() {
         setEgressGb(start)
         setLoaded(true)
       })
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load'))
+      .catch(err => setError(err instanceof Error ? err.message : t('common.loadFailed')))
   }, [])
 
   const rows = useMemo(
@@ -65,7 +67,7 @@ export default function CostPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Cost Estimator</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('cost.costEstimator')}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           What your data would cost on managed clouds vs. self-hosting with VaultS3. Adjust the numbers to model any scale.
         </p>
@@ -73,7 +75,7 @@ export default function CostPage() {
 
       {/* Presets */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">Quick scenario:</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">{t('cost.quickScenario')}</span>
         {liveGb >= 0.001 && (
           <button onClick={() => setPreset(liveGb)}
             className="px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100">
@@ -91,16 +93,16 @@ export default function CostPage() {
       {/* Inputs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <label className="text-xs text-gray-500 dark:text-gray-400">Stored data (GB)</label>
+          <label className="text-xs text-gray-500 dark:text-gray-400">{t('cost.storedDataGb')}</label>
           <input type="number" min={0} value={storageGb}
             onChange={e => setStorageGb(Math.max(0, Number(e.target.value)))} className={inputClass} />
           <div className="text-xs text-gray-400 mt-1">Your live size: {formatSize(liveGb)}</div>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <label className="text-xs text-gray-500 dark:text-gray-400">Egress per month (GB)</label>
+          <label className="text-xs text-gray-500 dark:text-gray-400">{t('cost.egressPerMonthGb')}</label>
           <input type="number" min={0} value={egressGb}
             onChange={e => setEgressGb(Math.max(0, Number(e.target.value)))} className={inputClass} />
-          <div className="text-xs text-gray-400 mt-1">How much you serve/download per month</div>
+          <div className="text-xs text-gray-400 mt-1">{t('cost.howMuchYouServeDownloadPer')}</div>
         </div>
       </div>
 
@@ -109,16 +111,16 @@ export default function CostPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Provider</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Storage / mo</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Egress / mo</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Monthly</th>
-              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Per year</th>
+              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('cost.provider')}</th>
+              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('cost.storageMo')}</th>
+              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('cost.egressMo')}</th>
+              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('cost.monthly')}</th>
+              <th className="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">{t('cost.perYear')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
             <tr className="bg-emerald-50 dark:bg-emerald-900/20">
-              <td className="px-4 py-3 font-semibold text-emerald-700 dark:text-emerald-400">VaultS3 (self-hosted)</td>
+              <td className="px-4 py-3 font-semibold text-emerald-700 dark:text-emerald-400">{t('cost.vaults3SelfHosted')}</td>
               <td className="px-4 py-3 text-right text-emerald-700 dark:text-emerald-400">{usd(0)}</td>
               <td className="px-4 py-3 text-right text-emerald-700 dark:text-emerald-400">{usd(0)} <span className="text-xs">(egress-free)</span></td>
               <td className="px-4 py-3 text-right font-semibold text-emerald-700 dark:text-emerald-400">{usd(0)}</td>
@@ -141,7 +143,7 @@ export default function CostPage() {
       {maxMonthly > 0 && (
         <div className="mt-4 p-4 rounded-xl bg-indigo-600 text-white">
           <div className="text-sm">
-            Self-hosting VaultS3 saves up to <strong>{usd(maxMonthly)}/mo</strong> (<strong>{usd(maxMonthly * 12)}/yr</strong>)
+            {t('cost.savesUpTo')} <strong>{usd(maxMonthly)}/mo</strong> (<strong>{usd(maxMonthly * 12)}/yr</strong>)
             versus the priciest managed option above — with no egress fees, ever.
           </div>
         </div>

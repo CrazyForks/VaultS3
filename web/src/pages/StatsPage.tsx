@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useI18n } from '../i18n'
 import { getStats, getClusterInfo, type Stats, type ClusterInfo } from '../api/stats'
 import { getActivity, type ActivityEntry } from '../api/activity'
 import BarChart from '../components/BarChart'
@@ -9,6 +10,7 @@ const REFRESH_KEY = 'vaults3_stats_autorefresh'
 const REFRESH_INTERVAL = 30000 // 30s
 
 export default function StatsPage() {
+  const { t } = useI18n()
   const [stats, setStats] = useState<Stats | null>(null)
   const [ci, setCi] = useState<ClusterInfo | null>(null)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
@@ -24,7 +26,7 @@ export default function StatsPage() {
       setActivity(a || [])
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load stats')
+      setError(err instanceof Error ? err.message : t('stats.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -70,7 +72,7 @@ export default function StatsPage() {
   if (error || !stats) {
     return (
       <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
-        {error || 'Failed to load stats'}
+        {error || t('stats.loadFailed')}
       </div>
     )
   }
@@ -78,7 +80,7 @@ export default function StatsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Storage Stats</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('stats.storageStats')}</h2>
         <button
           onClick={toggleAutoRefresh}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -99,17 +101,17 @@ export default function StatsPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total Storage" value={formatSize(stats.totalSize)} />
-        <StatCard label="Total Objects" value={String(stats.totalObjects)} />
-        <StatCard label="Buckets" value={String(stats.totalBuckets)} />
-        <StatCard label="Uptime" value={formatUptime(stats.uptimeSeconds)} />
+        <StatCard label={t('stats.totalStorage')} value={formatSize(stats.totalSize)} />
+        <StatCard label={t('stats.totalObjects')} value={String(stats.totalObjects)} />
+        <StatCard label={t('stats.buckets')} value={String(stats.totalBuckets)} />
+        <StatCard label={t('stats.uptime')} value={formatUptime(stats.uptimeSeconds)} />
       </div>
 
       {/* Disk capacity (cluster-wide totals when clustered) */}
       {ci && ci.totals.disk.totalBytes > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-6">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Storage Capacity</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('stats.storageCapacity')}</h3>
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {ci.clustered
                 ? `${ci.reachableNodes}/${ci.nodeCount} nodes`
@@ -163,28 +165,28 @@ export default function StatsPage() {
 
       {/* Request stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Requests" value={stats.totalRequests.toLocaleString()} />
-        <StatCard label="Errors" value={stats.totalErrors.toLocaleString()} />
-        <StatCard label="Bytes In" value={formatSize(stats.bytesIn)} />
-        <StatCard label="Bytes Out" value={formatSize(stats.bytesOut)} />
+        <StatCard label={t('stats.requests')} value={stats.totalRequests.toLocaleString()} />
+        <StatCard label={t('stats.errors')} value={stats.totalErrors.toLocaleString()} />
+        <StatCard label={t('stats.bytesIn')} value={formatSize(stats.bytesIn)} />
+        <StatCard label={t('stats.bytesOut')} value={formatSize(stats.bytesOut)} />
       </div>
 
       {/* Runtime + Sparkline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-1">Goroutines</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-1">{t('stats.goroutines')}</p>
           <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats.goroutines}</p>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-1">Memory</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-1">{t('stats.memory')}</p>
           <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats.memoryMB.toFixed(1)} MB</p>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-2">Request Activity</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-medium mb-2">{t('stats.requestActivity')}</p>
           {sparklineData.length > 1 ? (
             <Sparkline data={sparklineData} height={36} />
           ) : (
-            <p className="text-xs text-gray-400 dark:text-gray-500">No activity data</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">{t('stats.noActivityData')}</p>
           )}
         </div>
       </div>
@@ -194,7 +196,7 @@ export default function StatsPage() {
         {/* Donut chart -- request method distribution */}
         {stats.requestsByMethod && stats.requestsByMethod.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Requests by Method</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('stats.requestsByMethod')}</h3>
             <DonutChart
               items={stats.requestsByMethod.map(r => ({
                 label: r.method,
@@ -207,7 +209,7 @@ export default function StatsPage() {
         {/* Bar chart -- per-bucket sizes */}
         {stats.buckets.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Bucket Sizes</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('stats.bucketSizes')}</h3>
             <BarChart
               items={stats.buckets.map(b => ({
                 label: b.name,
@@ -222,7 +224,7 @@ export default function StatsPage() {
       {/* Per-bucket breakdown */}
       {stats.buckets.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Per-Bucket Storage</h3>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('stats.perBucketStorage')}</h3>
           <div className="space-y-3">
             {stats.buckets.map((b) => {
               const maxSize = Math.max(...stats.buckets.map(x => x.size), 1)

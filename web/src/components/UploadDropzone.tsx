@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { useI18n } from '../i18n'
 import { uploadFiles, uploadErrorMessage, type UploadResult } from '../api/objects'
 import { getToken } from '../api/client'
 import { API_BASE } from '../basePath'
@@ -68,6 +69,7 @@ async function collectFiles(dataTransfer: DataTransfer): Promise<{ files: File[]
 }
 
 export default function UploadDropzone({ bucket, prefix, onUploaded }: Props) {
+  const { t } = useI18n()
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -76,7 +78,7 @@ export default function UploadDropzone({ bucket, prefix, onUploaded }: Props) {
 
   const doUpload = useCallback(async (files: File[], preservePaths: boolean) => {
     if (files.length === 0) {
-      setError('No files found to upload (folder may be empty)')
+      setError(t('upload.noFilesFoundToUploadFolder'))
       return
     }
     setUploading(true)
@@ -106,7 +108,7 @@ export default function UploadDropzone({ bucket, prefix, onUploaded }: Props) {
               reject(new Error(uploadErrorMessage(xhr)))
             }
           }
-          xhr.onerror = () => reject(new Error('Upload failed'))
+          xhr.onerror = () => reject(new Error(t('upload.uploadFailed')))
           xhr.send(formData)
         })
         onUploaded(results)
@@ -115,7 +117,7 @@ export default function UploadDropzone({ bucket, prefix, onUploaded }: Props) {
         onUploaded(results)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      setError(err instanceof Error ? err.message : t('upload.uploadFailed'))
     } finally {
       setUploading(false)
       setProgress(0)
@@ -166,7 +168,7 @@ export default function UploadDropzone({ bucket, prefix, onUploaded }: Props) {
               onClick={() => inputRef.current?.click()}
               className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
             >
-              browse
+              {t('uploaddropzone.browse')}
             </button>
           </p>
           <input

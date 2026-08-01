@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { getReplicationStatus, getReplicationQueue, type ReplicationStatus, type ReplicationEvent } from '../api/replication'
 
 type RSortField = 'type' | 'bucket' | 'key' | 'peer' | 'retryCount'
 type RSortDir = 'asc' | 'desc'
 
 export default function ReplicationPage() {
+  const { t } = useI18n()
   const [status, setStatus] = useState<ReplicationStatus | null>(null)
   const [queue, setQueue] = useState<ReplicationEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -84,8 +86,8 @@ export default function ReplicationPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Replication</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Peer replication status and queue</p>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('replication.replication')}</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('replication.peerReplicationStatusAndQueue')}</p>
       </div>
 
       {error && (
@@ -107,7 +109,7 @@ export default function ReplicationPage() {
 
       {status && !status.enabled && (
         <div className="mb-6 p-5 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
-          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">Replication Not Enabled</h3>
+          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">{t('replication.replicationNotEnabled')}</h3>
           <p className="text-sm text-indigo-700 dark:text-indigo-400 mb-3">
             Async replication mirrors objects to peer VaultS3 instances automatically.
             Enable it in your <code className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 font-mono text-xs">vaults3.yaml</code> config:
@@ -130,26 +132,26 @@ export default function ReplicationPage() {
               <h4 className="font-medium text-gray-900 dark:text-white mb-3">{p.name}</h4>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">URL</dt>
+                  <dt className="text-gray-500 dark:text-gray-400">{t('replication.url')}</dt>
                   <dd className="text-gray-700 dark:text-gray-300 font-mono text-xs truncate max-w-[180px]">{p.url}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">Queue</dt>
+                  <dt className="text-gray-500 dark:text-gray-400">{t('replication.queue')}</dt>
                   <dd className="text-gray-700 dark:text-gray-300">{p.queueDepth}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">Total Synced</dt>
+                  <dt className="text-gray-500 dark:text-gray-400">{t('replication.totalSynced')}</dt>
                   <dd className="text-gray-700 dark:text-gray-300">{p.totalSynced}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">Last Sync</dt>
+                  <dt className="text-gray-500 dark:text-gray-400">{t('replication.lastSync')}</dt>
                   <dd className="text-gray-700 dark:text-gray-300 text-xs">
                     {p.lastSync ? new Date(p.lastSync).toLocaleString() : 'Never'}
                   </dd>
                 </div>
                 {p.lastError && (
                   <div>
-                    <dt className="text-red-500 text-xs">Last Error</dt>
+                    <dt className="text-red-500 text-xs">{t('replication.lastError')}</dt>
                     <dd className="text-red-400 text-xs mt-0.5 truncate">{p.lastError}</dd>
                   </div>
                 )}
@@ -159,22 +161,22 @@ export default function ReplicationPage() {
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center mb-6">
-          <p className="text-gray-400">No replication peers configured</p>
+          <p className="text-gray-400">{t('replication.noReplicationPeersConfigured')}</p>
         </div>
       )}
 
       {/* Queue table */}
-      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Pending Queue</h3>
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">{t('replication.pendingQueue')}</h3>
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
-              <RSortHeader field="type" label="Type" />
-              <RSortHeader field="bucket" label="Bucket" />
-              <RSortHeader field="key" label="Key" />
-              <RSortHeader field="peer" label="Peer" />
-              <RSortHeader field="retryCount" label="Retries" />
-              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Next Retry</th>
+              <RSortHeader field="type" label={t('replication.type')} />
+              <RSortHeader field="bucket" label={t('replication.bucket')} />
+              <RSortHeader field="key" label={t('replication.key')} />
+              <RSortHeader field="peer" label={t('replication.peer')} />
+              <RSortHeader field="retryCount" label={t('replication.retries')} />
+              <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('replication.nextRetry')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -191,7 +193,7 @@ export default function ReplicationPage() {
               </tr>
             ))}
             {queue.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Queue empty</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">{t('replication.queueEmpty')}</td></tr>
             )}
           </tbody>
         </table>

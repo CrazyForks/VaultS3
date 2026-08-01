@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { Link } from 'react-router-dom'
 import { getStats, type Stats } from '../api/stats'
 import { getActivity, type ActivityEntry } from '../api/activity'
 import Sparkline from '../components/Sparkline'
 
 export default function HomePage() {
+  const { t } = useI18n()
   const [stats, setStats] = useState<Stats | null>(null)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -17,7 +19,7 @@ export default function HomePage() {
       setActivity(a || [])
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load')
+      setError(err instanceof Error ? err.message : t('common.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -48,31 +50,31 @@ export default function HomePage() {
   if (error || !stats) {
     return (
       <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
-        {error || 'Failed to load'}
+        {error || t('common.loadFailed')}
       </div>
     )
   }
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Dashboard</h2>
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">{t('home.title')}</h2>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <SummaryCard label="Buckets" value={String(stats.totalBuckets)} to="/buckets" color="indigo" />
-        <SummaryCard label="Objects" value={stats.totalObjects.toLocaleString()} color="blue" />
-        <SummaryCard label="Storage" value={formatSize(stats.totalSize)} color="emerald" />
-        <SummaryCard label="Requests" value={stats.totalRequests.toLocaleString()} to="/stats" color="amber" />
+        <SummaryCard label={t('nav.buckets')} value={String(stats.totalBuckets)} to="/buckets" color="indigo" />
+        <SummaryCard label={t('home.objects')} value={stats.totalObjects.toLocaleString()} color="blue" />
+        <SummaryCard label={t('home.storage')} value={formatSize(stats.totalSize)} color="emerald" />
+        <SummaryCard label={t('home.requests')} value={stats.totalRequests.toLocaleString()} to="/stats" color="amber" />
       </div>
 
       {/* Activity sparkline + runtime */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Recent Activity</h3>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">{t('home.recentActivity')}</h3>
           {sparklineData.length > 1 ? (
             <Sparkline data={sparklineData} height={48} />
           ) : (
-            <p className="text-xs text-gray-400 dark:text-gray-500">No activity data</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">{t('home.noActivity')}</p>
           )}
           {activity.length > 0 && (
             <div className="mt-3 space-y-1.5">
@@ -90,30 +92,30 @@ export default function HomePage() {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">System</h3>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">{t('home.system')}</h3>
           <div className="grid grid-cols-2 gap-3">
-            <MiniStat label="Uptime" value={formatUptime(stats.uptimeSeconds)} />
-            <MiniStat label="Memory" value={`${stats.memoryMB.toFixed(1)} MB`} />
-            <MiniStat label="Goroutines" value={String(stats.goroutines)} />
-            <MiniStat label="Errors" value={stats.totalErrors.toLocaleString()} />
-            <MiniStat label="Bytes In" value={formatSize(stats.bytesIn)} />
-            <MiniStat label="Bytes Out" value={formatSize(stats.bytesOut)} />
+            <MiniStat label={t('home.uptime')} value={formatUptime(stats.uptimeSeconds)} />
+            <MiniStat label={t('home.memory')} value={`${stats.memoryMB.toFixed(1)} MB`} />
+            <MiniStat label={t('home.goroutines')} value={String(stats.goroutines)} />
+            <MiniStat label={t('home.errors')} value={stats.totalErrors.toLocaleString()} />
+            <MiniStat label={t('home.bytesIn')} value={formatSize(stats.bytesIn)} />
+            <MiniStat label={t('home.bytesOut')} value={formatSize(stats.bytesOut)} />
           </div>
         </div>
       </div>
 
       {/* Quick actions */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Quick Actions</h3>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">{t('home.quickActions')}</h3>
         <div className="flex flex-wrap gap-2">
-          <QuickLink to="/buckets" label="Browse Buckets" />
-          <QuickLink to="/search" label="Search Objects" />
-          <QuickLink to="/access-keys" label="Manage Keys" />
-          <QuickLink to="/iam" label="IAM Users" />
-          <QuickLink to="/audit" label="Audit Trail" />
-          <QuickLink to="/stats" label="Storage Stats" />
-          <QuickLink to="/activity" label="Activity Log" />
-          <QuickLink to="/settings" label="Settings" />
+          <QuickLink to="/buckets" label={t('home.browseBuckets')} />
+          <QuickLink to="/search" label={t('home.searchObjects')} />
+          <QuickLink to="/access-keys" label={t('home.manageKeys')} />
+          <QuickLink to="/iam" label={t('home.iamUsers')} />
+          <QuickLink to="/audit" label={t('home.auditTrail')} />
+          <QuickLink to="/stats" label={t('home.storageStats')} />
+          <QuickLink to="/activity" label={t('home.activityLog')} />
+          <QuickLink to="/settings" label={t('nav.settings')} />
         </div>
       </div>
     </div>

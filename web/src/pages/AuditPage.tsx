@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { queryAudit, type AuditEntry } from '../api/audit'
 
 type SortField = 'time' | 'user' | 'action' | 'resource' | 'effect' | 'sourceIP' | 'statusCode'
@@ -7,6 +8,7 @@ type SortDir = 'asc' | 'desc'
 const PAGE_SIZE = 50
 
 export default function AuditPage() {
+  const { t } = useI18n()
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -32,7 +34,7 @@ export default function AuditPage() {
       setEntries(data || [])
       setPage(0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load audit trail')
+      setError(err instanceof Error ? err.message : t('audit.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -103,8 +105,8 @@ export default function AuditPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Audit Trail</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Security and access audit log</p>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('audit.auditTrail')}</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('audit.securityAndAccessAuditLog')}</p>
       </div>
 
       {error && (
@@ -115,10 +117,10 @@ export default function AuditPage() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <input type="text" placeholder="Filter by user..." value={filterUser}
+        <input type="text" placeholder={t('audit.filterByUser')} value={filterUser}
           onChange={e => setFilterUser(e.target.value)}
           className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-44" />
-        <input type="text" placeholder="Filter by bucket..." value={filterBucket}
+        <input type="text" placeholder={t('audit.filterByBucket')} value={filterBucket}
           onChange={e => setFilterBucket(e.target.value)}
           className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm w-44" />
         <select value={limit} onChange={e => setLimit(Number(e.target.value))}
@@ -135,13 +137,13 @@ export default function AuditPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <SortHeader field="time" label="Time" />
-                <SortHeader field="user" label="User" />
-                <SortHeader field="action" label="Action" />
-                <SortHeader field="resource" label="Resource" />
-                <SortHeader field="effect" label="Effect" />
-                <SortHeader field="sourceIP" label="Source IP" />
-                <SortHeader field="statusCode" label="Status" />
+                <SortHeader field="time" label={t('audit.time')} />
+                <SortHeader field="user" label={t('audit.user')} />
+                <SortHeader field="action" label={t('audit.action')} />
+                <SortHeader field="resource" label={t('audit.resource')} />
+                <SortHeader field="effect" label={t('audit.effect')} />
+                <SortHeader field="sourceIP" label={t('audit.sourceIp')} />
+                <SortHeader field="statusCode" label={t('audit.status')} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -169,7 +171,7 @@ export default function AuditPage() {
                 </tr>
               ))}
               {entries.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No audit entries</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">{t('audit.noAuditEntries')}</td></tr>
               )}
             </tbody>
           </table>
@@ -188,14 +190,14 @@ export default function AuditPage() {
               disabled={page === 0}
               className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Prev
+              {t('audit.prev')}
             </button>
             <button
               onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
               className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Next
+              {t('audit.next')}
             </button>
           </div>
         </div>

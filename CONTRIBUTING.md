@@ -58,11 +58,34 @@ should come with fault-injection coverage (corrupt a shard and heal, lose a
 node, partition two sites and check convergence). See the existing
 `*_test.go` files in those packages for the pattern.
 
+## Translating the dashboard
+
+The dashboard ships English, German, French and Simplified Chinese. Adding a
+language is one JSON file, no code:
+
+1. Copy `web/src/i18n/locales/en.json` to `web/src/i18n/locales/<code>.json`,
+   where `<code>` is a BCP 47 tag (`es`, `pt-BR`, `ja`).
+2. Translate the values. Leave the keys alone, and keep every `{placeholder}`
+   exactly as it appears in English, since those are filled in at runtime.
+3. Register it in `web/src/i18n/index.tsx`: import the file and add one entry to
+   `LOCALES`. Write the label in the language itself (`Espanol`, not `Spanish`),
+   so it is readable no matter which language the UI is currently in.
+4. `cd web && npx vitest run` checks that your file has every English key, no
+   keys English does not define, and the same placeholders in each string.
+
+A key you leave out falls back to English at runtime, so a partial translation
+never breaks the UI. Translations for the languages we already ship were drafted
+without a native-speaker review, so corrections are genuinely welcome, please
+send them as a PR.
+
+Server-side messages (S3 API errors, log lines) are English only and are not
+part of this.
+
 ## Submitting changes
 
 1. Fork and create a feature branch off `main`.
 2. Keep changes focused. One logical change per PR.
-3. Run `go test ./...` and `npm run build` before opening the PR.
+3. Run `go test ./...`, `npm run build`, and (for dashboard changes) `cd web && npx vitest run` before opening the PR.
 4. Use clear, present-tense commit messages (e.g. `Fix versioned ListObjectsV2 empty result`).
 5. Update `README.md` and any relevant docs when you change user-facing behavior.
 6. Open the PR against `main` and describe **what** changed and **why**.

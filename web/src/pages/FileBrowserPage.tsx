@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useI18n } from '../i18n'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { listObjects, deleteObject, bulkDeleteObjects, getDownloadUrl, getDownloadZipUrl, type ObjectItem } from '../api/objects'
 import { getBucketVersioning } from '../api/buckets'
@@ -19,6 +20,7 @@ const FETCH_SIZE = 1000 // objects pulled from the server per request
 const VIEW_MODE_KEY = 'vaults3:fileBrowserViewMode'
 
 export default function FileBrowserPage() {
+  const { t } = useI18n()
   const { name: bucket } = useParams<{ name: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const prefix = searchParams.get('prefix') || ''
@@ -87,7 +89,7 @@ export default function FileBrowserPage() {
       listVersions(bucket, selectedFile.key),
       getVersionTags(bucket, selectedFile.key),
     ])
-      .then(([v, t]) => { setVersions(v); setVersionTags(t) })
+      .then(([v, tags]) => { setVersions(v); setVersionTags(tags) })
       .catch(() => { setVersions([]); setVersionTags([]) })
       .finally(() => setVersionsLoading(false))
   }, [bucket, selectedFile, sideTab])
@@ -98,17 +100,17 @@ export default function FileBrowserPage() {
     try {
       await rollbackVersion(bucket, selectedFile.key, versionId)
       setRollbackTarget(null)
-      addToast('success', 'Version rolled back')
+      addToast('success', t('files.versionRolledBack'))
       fetchObjects()
       // Refresh versions
-      const [v, t] = await Promise.all([
+      const [v, tags] = await Promise.all([
         listVersions(bucket, selectedFile.key),
         getVersionTags(bucket, selectedFile.key),
       ])
       setVersions(v)
-      setVersionTags(t)
+      setVersionTags(tags)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Rollback failed')
+      setError(err instanceof Error ? err.message : t('files.rollbackFailed'))
     }
   }
 
@@ -118,10 +120,10 @@ export default function FileBrowserPage() {
       await createVersionTag(bucket, selectedFile.key, versionId, newTagName.trim())
       setNewTagVersion(null)
       setNewTagName('')
-      const t = await getVersionTags(bucket, selectedFile.key)
-      setVersionTags(t)
+      const tags = await getVersionTags(bucket, selectedFile.key)
+      setVersionTags(tags)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add tag')
+      setError(err instanceof Error ? err.message : t('files.addTagFailed'))
     }
   }
 
@@ -129,10 +131,10 @@ export default function FileBrowserPage() {
     if (!bucket || !selectedFile) return
     try {
       await deleteVersionTag(bucket, selectedFile.key, tagName)
-      const t = await getVersionTags(bucket, selectedFile.key)
-      setVersionTags(t)
+      const tags = await getVersionTags(bucket, selectedFile.key)
+      setVersionTags(tags)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete tag')
+      setError(err instanceof Error ? err.message : t('files.deleteTagFailed'))
     }
   }
 
@@ -148,7 +150,7 @@ export default function FileBrowserPage() {
       setPage(0)
       setSelectedKeys(new Set())
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to list objects')
+      setError(err instanceof Error ? err.message : t('files.listFailed'))
     } finally {
       setLoading(false)
     }
@@ -169,7 +171,7 @@ export default function FileBrowserPage() {
       setTruncated(data.truncated)
       setNextCursor(data.nextStartAfter || '')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load more objects')
+      setError(err instanceof Error ? err.message : t('files.loadMoreFailed'))
     } finally {
       setLoadingMore(false)
     }
@@ -187,10 +189,10 @@ export default function FileBrowserPage() {
       await deleteObject(bucket, key)
       setDeleteTarget(null)
       if (selectedFile?.key === key) { setSelectedFile(null); setPreviewContent(null) }
-      addToast('success', 'Object deleted')
+      addToast('success', t('files.objectDeleted'))
       fetchObjects()
     } catch (err) {
-      addToast('error', err instanceof Error ? err.message : 'Failed to delete object')
+      addToast('error', err instanceof Error ? err.message : t('files.deleteObjectFailed'))
     }
   }
 
@@ -210,7 +212,7 @@ export default function FileBrowserPage() {
       addToast('success', `${count} object${count !== 1 ? 's' : ''} deleted`)
       fetchObjects()
     } catch (err) {
-      addToast('error', err instanceof Error ? err.message : 'Bulk delete failed')
+      addToast('error', err instanceof Error ? err.message : t('files.bulkDeleteFailed'))
     } finally {
       setBulkDeleting(false)
     }
@@ -392,14 +394,14 @@ export default function FileBrowserPage() {
               </span>
             ))}
           </nav>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Files</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('files.title')}</h2>
         </div>
 
         <div className="flex items-center justify-end mb-3">
           <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             <button
               onClick={() => setView('table')}
-              title="List view"
+              title={t('files.listView')}
               aria-pressed={viewMode === 'table'}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
                 viewMode === 'table'
@@ -410,11 +412,11 @@ export default function FileBrowserPage() {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
               </svg>
-              List
+              {t('files.listView')}
             </button>
             <button
               onClick={() => setView('grid')}
-              title="Grid view"
+              title={t('files.gridView')}
               aria-pressed={viewMode === 'grid'}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-l border-gray-200 dark:border-gray-700 transition-colors ${
                 viewMode === 'grid'
@@ -425,7 +427,7 @@ export default function FileBrowserPage() {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6a2.25 2.25 0 012.25-2.25h.75a2.25 2.25 0 012.25 2.25v.75a2.25 2.25 0 01-2.25 2.25h-.75A2.25 2.25 0 013.75 6.75V6zM3.75 15a2.25 2.25 0 012.25-2.25h.75a2.25 2.25 0 012.25 2.25v.75a2.25 2.25 0 01-2.25 2.25h-.75A2.25 2.25 0 013.75 17.25V15zM13.5 6a2.25 2.25 0 012.25-2.25h.75A2.25 2.25 0 0118.75 6v.75a2.25 2.25 0 01-2.25 2.25h-.75a2.25 2.25 0 01-2.25-2.25V6zM13.5 15a2.25 2.25 0 012.25-2.25h.75a2.25 2.25 0 012.25 2.25v.75a2.25 2.25 0 01-2.25 2.25h-.75a2.25 2.25 0 01-2.25-2.25V15z" />
               </svg>
-              Grid
+              {t('files.gridView')}
             </button>
           </div>
         </div>
@@ -444,19 +446,19 @@ export default function FileBrowserPage() {
               onClick={() => setShowBulkDeleteModal(true)}
               className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors"
             >
-              Delete Selected
+              {t('files.deleteSelected')}
             </button>
             <a
               href={getDownloadZipUrl(bucket, Array.from(selectedKeys))}
               className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-colors"
             >
-              Download Zip
+              {t('files.downloadZip')}
             </a>
             <button
               onClick={() => setSelectedKeys(new Set())}
               className="ml-auto text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
             >
-              Clear
+              {t('files.clear')}
             </button>
           </div>
         )}
@@ -471,22 +473,22 @@ export default function FileBrowserPage() {
         {deleteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-sm mx-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Delete Object</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('files.deleteObject')}</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Are you sure you want to delete <strong className="break-all">{deleteTarget}</strong>?
+                {t('buckets.deleteConfirm')} <strong className="break-all">{deleteTarget}</strong>?
               </p>
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={() => setDeleteTarget(null)}
                   className="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={() => handleDelete(deleteTarget)}
                   className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
                 >
-                  Delete
+                  {t('common.delete')}
                 </button>
               </div>
             </div>
@@ -497,9 +499,9 @@ export default function FileBrowserPage() {
         {showBulkDeleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-sm mx-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Bulk Delete</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('files.bulkDelete')}</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                Are you sure you want to delete <strong>{selectedKeys.size}</strong> object{selectedKeys.size !== 1 ? 's' : ''}?
+                {t('buckets.deleteConfirm')} <strong>{selectedKeys.size}</strong> {t('files.objectsWord', { n: selectedKeys.size })}?
               </p>
               <div className="flex gap-2 justify-end">
                 <button
@@ -507,14 +509,14 @@ export default function FileBrowserPage() {
                   disabled={bulkDeleting}
                   className="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleBulkDelete}
                   disabled={bulkDeleting}
                   className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-50"
                 >
-                  {bulkDeleting ? 'Deleting...' : `Delete ${selectedKeys.size} objects`}
+                  {bulkDeleting ? t('files.deleting') : t('files.deleteNObjects', { n: selectedKeys.size })}
                 </button>
               </div>
             </div>
@@ -530,8 +532,8 @@ export default function FileBrowserPage() {
             <svg className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
             </svg>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">No files here yet</p>
-            <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">Upload files using the dropzone above</p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">{t('files.empty')}</p>
+            <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">{t('files.emptyHint')}</p>
           </div>
         ) : (
           <>
@@ -548,11 +550,11 @@ export default function FileBrowserPage() {
                         className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500"
                       />
                     </th>
-                    <SortHeader field="name" label="Name" />
-                    <SortHeader field="size" label="Size" />
-                    <SortHeader field="type" label="Type" />
-                    <SortHeader field="modified" label="Modified" />
-                    <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                    <SortHeader field="name" label={t('common.name')} />
+                    <SortHeader field="size" label={t('common.size')} />
+                    <SortHeader field="type" label={t('common.type')} />
+                    <SortHeader field="modified" label={t('files.modified')} />
+                    <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -591,7 +593,7 @@ export default function FileBrowserPage() {
                         {obj.isPrefix ? '-' : formatSize(obj.size)}
                       </td>
                       <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                        {obj.isPrefix ? 'Folder' : (obj.contentType || '-')}
+                        {obj.isPrefix ? t('files.folder') : (obj.contentType || '-')}
                       </td>
                       <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
                         {/* Folders now carry a date too (issue #35); formatDate returns '-' when absent. */}
@@ -604,14 +606,14 @@ export default function FileBrowserPage() {
                             <a
                               href={getDownloadUrl(bucket, obj.key)}
                               className="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                              title="Download"
+                              title={t('common.download')}
                             >
                               <DownloadIcon />
                             </a>
                             <button
                               onClick={() => setDeleteTarget(obj.key)}
                               className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                              title="Delete"
+                              title={t('common.delete')}
                             >
                               <TrashIcon />
                             </button>
@@ -654,7 +656,7 @@ export default function FileBrowserPage() {
                       disabled={loadingMore}
                       className="px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                      {loadingMore ? 'Loading…' : `Load ${FETCH_SIZE} more`}
+                      {loadingMore ? t('common.loading') : t('files.loadMore', { n: FETCH_SIZE })}
                     </button>
                   )}
                   <button
@@ -662,14 +664,14 @@ export default function FileBrowserPage() {
                     disabled={page === 0}
                     className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
-                    Prev
+                    {t('files.prev')}
                   </button>
                   <button
                     onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                     disabled={page >= totalPages - 1}
                     className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
-                    Next
+                    {t('files.next')}
                   </button>
                 </div>
               </div>
@@ -693,22 +695,22 @@ export default function FileBrowserPage() {
       {rollbackTarget && selectedFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-sm mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Rollback Version</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('files.rollbackVersion')}</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Restore <strong className="break-all">{displayName(selectedFile.key, prefix)}</strong> to version <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">{rollbackTarget.slice(0, 16)}...</code>?
+              {t('files.restoreTo')} <strong className="break-all">{displayName(selectedFile.key, prefix)}</strong> {t('files.toVersion')} <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">{rollbackTarget.slice(0, 16)}...</code>?
             </p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setRollbackTarget(null)}
                 className="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={() => handleRollback(rollbackTarget)}
                 className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
               >
-                Rollback
+                {t('files.rollback')}
               </button>
             </div>
           </div>
@@ -742,7 +744,7 @@ export default function FileBrowserPage() {
                       : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                   }`}
                 >
-                  Info
+                  {t('files.info')}
                 </button>
                 <button
                   onClick={() => setSideTab('versions')}
@@ -752,7 +754,7 @@ export default function FileBrowserPage() {
                       : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                   }`}
                 >
-                  Versions
+                  {t('files.versions')}
                 </button>
               </div>
             )}
@@ -762,22 +764,22 @@ export default function FileBrowserPage() {
               <>
                 <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 space-y-2.5 text-xs mb-5 border border-gray-100 dark:border-gray-700/50">
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-500 dark:text-gray-400 font-medium">Key</span>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">{t('files.key')}</span>
                     <span className="flex items-center gap-1">
                       <span className="text-gray-900 dark:text-white font-mono truncate max-w-[140px]" title={selectedFile.key}>{selectedFile.key}</span>
                       <CopyButton text={selectedFile.key} />
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-500 dark:text-gray-400 font-medium">S3 URI</span>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">{t('files.s3uri')}</span>
                     <span className="flex items-center gap-1">
                       <span className="text-gray-900 dark:text-white font-mono truncate max-w-[140px]" title={`s3://${bucket}/${selectedFile.key}`}>s3://{bucket}/...</span>
                       <CopyButton text={`s3://${bucket}/${selectedFile.key}`} />
                     </span>
                   </div>
-                  <MetaRow label="Size" value={formatSize(selectedFile.size)} />
-                  <MetaRow label="Type" value={selectedFile.contentType || '-'} />
-                  <MetaRow label="Modified" value={selectedFile.lastModified ? new Date(selectedFile.lastModified).toLocaleString() : '-'} />
+                  <MetaRow label={t('common.size')} value={formatSize(selectedFile.size)} />
+                  <MetaRow label={t('common.type')} value={selectedFile.contentType || '-'} />
+                  <MetaRow label={t('files.modified')} value={selectedFile.lastModified ? new Date(selectedFile.lastModified).toLocaleString() : '-'} />
                 </div>
 
                 <div className="flex gap-2 mb-4">
@@ -785,13 +787,13 @@ export default function FileBrowserPage() {
                     href={getDownloadUrl(bucket, selectedFile.key)}
                     className="flex-1 text-center px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-colors"
                   >
-                    Download
+                    {t('common.download')}
                   </a>
                   <button
                     onClick={() => setDeleteTarget(selectedFile.key)}
                     className="px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs font-medium transition-colors"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
 
@@ -817,7 +819,7 @@ export default function FileBrowserPage() {
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                       </svg>
-                      Preview
+                      {t('files.preview')}
                     </div>
                     <pre className="p-4 text-[11px] text-gray-800 dark:text-gray-200 overflow-auto max-h-80 whitespace-pre-wrap font-mono bg-white dark:bg-gray-900/50">
                       {previewContent.slice(0, 10000)}{previewContent.length > 10000 ? '\n\n... truncated ...' : ''}
@@ -827,7 +829,7 @@ export default function FileBrowserPage() {
 
                 {!previewLoading && previewContent === null && selectedFile && (
                   <div className="text-center py-6 text-xs text-gray-400 dark:text-gray-500">
-                    No preview available
+                    {t('files.noPreview')}
                   </div>
                 )}
               </>
@@ -842,7 +844,7 @@ export default function FileBrowserPage() {
                   </div>
                 ) : versions.length === 0 ? (
                   <div className="text-center py-6 text-gray-400 dark:text-gray-500">
-                    No versions found
+                    {t('files.noVersions')}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -856,12 +858,12 @@ export default function FileBrowserPage() {
                             </span>
                             {v.isLatest && (
                               <span className="px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-[10px] font-medium">
-                                Latest
+                                {t('files.latest')}
                               </span>
                             )}
                             {v.deleteMarker && (
                               <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-[10px] font-medium">
-                                Deleted
+                                {t('files.deletedMarker')}
                               </span>
                             )}
                           </div>
@@ -888,7 +890,7 @@ export default function FileBrowserPage() {
                                 type="text"
                                 value={newTagName}
                                 onChange={e => setNewTagName(e.target.value)}
-                                placeholder="Tag name..."
+                                placeholder={t('files.tagPlaceholder')}
                                 className="flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-[11px] outline-none focus:ring-1 focus:ring-indigo-500"
                                 onKeyDown={e => e.key === 'Enter' && handleAddTag(v.versionId)}
                                 autoFocus
@@ -897,7 +899,7 @@ export default function FileBrowserPage() {
                                 onClick={() => handleAddTag(v.versionId)}
                                 className="px-2 py-1 rounded bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700"
                               >
-                                Add
+                                {t('common.add')}
                               </button>
                               <button
                                 onClick={() => { setNewTagVersion(null); setNewTagName('') }}
@@ -913,26 +915,26 @@ export default function FileBrowserPage() {
                             <button
                               onClick={() => { setNewTagVersion(v.versionId); setNewTagName('') }}
                               className="px-2 py-0.5 rounded text-[10px] text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600"
-                              title="Add tag"
+                              title={t('files.addTag')}
                             >
-                              Tag
+                              {t('files.tag')}
                             </button>
                             {i < versions.length - 1 && (
                               <button
                                 onClick={() => setDiffVersions([v.versionId, versions[i + 1].versionId])}
                                 className="px-2 py-0.5 rounded text-[10px] text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600"
-                                title="Diff with next version"
+                                title={t('files.diffNext')}
                               >
-                                Diff
+                                {t('files.diff')}
                               </button>
                             )}
                             {!v.isLatest && !v.deleteMarker && (
                               <button
                                 onClick={() => setRollbackTarget(v.versionId)}
                                 className="px-2 py-0.5 rounded text-[10px] text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700"
-                                title="Rollback to this version"
+                                title={t('files.rollbackTo')}
                               >
-                                Rollback
+                                {t('files.rollback')}
                               </button>
                             )}
                           </div>

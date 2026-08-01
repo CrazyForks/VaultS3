@@ -1,23 +1,24 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { getVersion, type VersionStatus } from '../api/version'
+import { useI18n } from '../i18n'
 
 const navItems = [
-  { to: '/', label: 'Home', icon: homeIcon },
-  { to: '/buckets', label: 'Buckets', icon: bucketIcon },
-  { to: '/search', label: 'Search', icon: searchIcon },
-  { to: '/access-keys', label: 'Access Keys', icon: keyIcon },
-  { to: '/iam', label: 'IAM', icon: iamIcon },
-  { to: '/audit', label: 'Audit', icon: auditIcon },
-  { to: '/notifications', label: 'Notifications', icon: notifIcon },
-  { to: '/lambda', label: 'Lambda', icon: lambdaIcon },
-  { to: '/replication', label: 'Replication', icon: replicationIcon },
-  { to: '/migrate', label: 'Migrate', icon: migrateIcon },
-  { to: '/backup', label: 'Backups', icon: backupIcon },
-  { to: '/activity', label: 'Activity', icon: activityIcon },
-  { to: '/stats', label: 'Stats', icon: statsIcon },
-  { to: '/cost', label: 'Cost', icon: costIcon },
-  { to: '/settings', label: 'Settings', icon: settingsIcon },
+  { to: '/', labelKey: 'nav.home', icon: homeIcon },
+  { to: '/buckets', labelKey: 'nav.buckets', icon: bucketIcon },
+  { to: '/search', labelKey: 'nav.search', icon: searchIcon },
+  { to: '/access-keys', labelKey: 'nav.accessKeys', icon: keyIcon },
+  { to: '/iam', labelKey: 'nav.iam', icon: iamIcon },
+  { to: '/audit', labelKey: 'nav.audit', icon: auditIcon },
+  { to: '/notifications', labelKey: 'nav.notifications', icon: notifIcon },
+  { to: '/lambda', labelKey: 'nav.lambda', icon: lambdaIcon },
+  { to: '/replication', labelKey: 'nav.replication', icon: replicationIcon },
+  { to: '/migrate', labelKey: 'nav.migrate', icon: migrateIcon },
+  { to: '/backup', labelKey: 'nav.backups', icon: backupIcon },
+  { to: '/activity', labelKey: 'nav.activity', icon: activityIcon },
+  { to: '/stats', labelKey: 'nav.stats', icon: statsIcon },
+  { to: '/cost', labelKey: 'nav.cost', icon: costIcon },
+  { to: '/settings', labelKey: 'nav.settings', icon: settingsIcon },
 ]
 
 interface Props {
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Props) {
+  const { t } = useI18n()
   return (
     <aside className="w-full h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col transition-all duration-300 overflow-hidden">
       <div className={`h-14 px-4 border-b border-gray-200 dark:border-gray-700 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} shrink-0`}>
@@ -35,7 +37,7 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Prop
             <h1 className="text-lg font-bold text-gray-900 dark:text-white tracking-tight leading-none">
               VaultS3
             </h1>
-            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 uppercase tracking-wider font-semibold leading-none">Object Storage</p>
+            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 uppercase tracking-wider font-semibold leading-none">{t('app.tagline')}</p>
           </div>
         )}
         {onClose && (
@@ -52,7 +54,7 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Prop
           <button
             onClick={onToggleCollapse}
             className={`hidden md:flex p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors shrink-0 ${isCollapsed ? '' : 'ml-2'}`}
-            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
           >
             {isCollapsed ? (
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -73,7 +75,7 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Prop
             to={item.to}
             end={item.to === '/'}
             onClick={onClose}
-            title={isCollapsed ? item.label : undefined}
+            title={isCollapsed ? t(item.labelKey) : undefined}
             className={({ isActive }) =>
               `flex items-center gap-2.5 ${isCollapsed ? 'justify-center px-2' : 'px-3'} py-2 rounded-lg text-sm font-medium transition-colors ${
                 isActive
@@ -83,7 +85,7 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Prop
             }
           >
             <div className="shrink-0">{item.icon()}</div>
-            {!isCollapsed && <span className="whitespace-nowrap">{item.label}</span>}
+            {!isCollapsed && <span className="whitespace-nowrap">{t(item.labelKey)}</span>}
           </NavLink>
         ))}
       </nav>
@@ -93,6 +95,7 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }: Prop
 }
 
 function SidebarVersion({ isCollapsed }: { isCollapsed?: boolean }) {
+  const { t } = useI18n()
   const [v, setV] = useState<VersionStatus | null>(null)
   useEffect(() => {
     getVersion().then(setV).catch(() => {})
@@ -106,17 +109,17 @@ function SidebarVersion({ isCollapsed }: { isCollapsed?: boolean }) {
         href="https://github.com/Kodiqa-Solutions/VaultS3/releases"
         target="_blank"
         rel="noreferrer"
-        title={outdated ? `Update available: ${v.latest}` : 'You are on the latest version'}
+        title={outdated ? t('sidebar.updateAvailable', { version: v.latest ?? '' }) : t('sidebar.onLatest')}
         className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors`}
       >
         {!isCollapsed && <span className="font-mono whitespace-nowrap">{label}</span>}
         {outdated ? (
           <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-medium shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse shrink-0" />
-            {!isCollapsed && "update"}
+            {!isCollapsed && t('sidebar.update')}
           </span>
         ) : (
-          !isCollapsed && <span className="text-gray-400 dark:text-gray-500 whitespace-nowrap">latest</span>
+          !isCollapsed && <span className="text-gray-400 dark:text-gray-500 whitespace-nowrap">{t('sidebar.latest')}</span>
         )}
         {isCollapsed && !outdated && (
           <span className="font-mono text-[10px] shrink-0">{v.current.replace(/^v/, '')}</span>

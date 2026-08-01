@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
+import { useI18n } from '../i18n'
 import { getVersion, type VersionStatus } from '../api/version'
 
 const DISMISS_KEY = 'vaults3_dismissed_update'
 
 export default function UpdateBanner() {
+  const { t } = useI18n()
   const [status, setStatus] = useState<VersionStatus | null>(null)
   const [dismissed, setDismissed] = useState(false)
 
@@ -27,7 +29,7 @@ export default function UpdateBanner() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <span>
-          A new version <strong>{status.latest}</strong> is available (you're on {status.current}).
+          {t('updatebanner.newVersion')} <strong>{status.latest}</strong> {t('updatebanner.available', { current: status.current })}
         </span>
         <a
           href="https://github.com/Kodiqa-Solutions/VaultS3/releases/latest"
@@ -35,10 +37,10 @@ export default function UpdateBanner() {
           rel="noopener noreferrer"
           className="underline underline-offset-2 hover:text-indigo-100"
         >
-          Release notes
+          {t('updatebanner.releaseNotes')}
         </a>
       </div>
-      <button onClick={dismiss} className="text-indigo-100 hover:text-white" aria-label="Dismiss">
+      <button onClick={dismiss} className="text-indigo-100 hover:text-white" aria-label={t('updatebanner.dismiss')}>
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>

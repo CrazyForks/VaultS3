@@ -106,7 +106,8 @@ VaultS3 is honest about what's battle-tested versus still maturing. Pick the lan
 - **Per-bucket Prometheus metrics**: Request counts, bytes in/out, and errors with bucket labels at `/metrics`
 - **Prometheus metrics**: `/metrics` endpoint with storage, request, and runtime stats
 - **Presigned URLs**: Pre-authenticated URL generation
-- **Web dashboard**: Built-in React UI at `/dashboard/` with home overview page, file browser (grid or list layout with file-type icons, sortable columns, pagination, file preview, metadata panel, version history panel with diff viewer/rollback/tagging, multi-select, bulk delete, bulk zip download, breadcrumb navigation), drag-and-drop file and folder upload (streamed straight to storage so large files work, with subfolder structure preserved), copy-to-clipboard buttons, access key management, activity log, storage stats with auto-refresh, read-only settings viewer, IAM management, audit trail viewer (sortable, paginated), search (sortable, paginated), notifications, replication status, lambda triggers, backup management, bucket config (versioning toggle with status indicator, lifecycle editor, CORS editor), keyboard shortcuts (`/` search, `?` help), toast notifications (success/error/info), dark/light theme, collapsible sidebar, remember-me sign-in, responsive layout
+- **Web dashboard**: Built-in React UI at `/dashboard/` with home overview page, file browser (grid or list layout with file-type icons, sortable columns, pagination, file preview, metadata panel, version history panel with diff viewer/rollback/tagging, multi-select, bulk delete, bulk zip download, breadcrumb navigation), drag-and-drop file and folder upload (streamed straight to storage so large files work, with subfolder structure preserved), copy-to-clipboard buttons, access key management, activity log, storage stats with auto-refresh, read-only settings viewer, IAM management, audit trail viewer (sortable, paginated), search (sortable, paginated), notifications, replication status, lambda triggers, backup management, bucket config (versioning toggle with status indicator, lifecycle editor, CORS editor), keyboard shortcuts (`/` search, `?` help), toast notifications (success/error/info), dark/light theme, language switcher, collapsible sidebar, remember-me sign-in, responsive layout
+- **Dashboard in your language**: The Web UI ships **English, German, French, and Simplified Chinese**, picked automatically from the browser's language and switchable from the top bar (the choice is remembered). Adding a language is one JSON file and no code, see [Translating the dashboard](CONTRIBUTING.md#translating-the-dashboard)
 - **Health checks**: `/health` (liveness) and `/ready` (readiness) endpoints for load balancers and Kubernetes
 - **Buckets on first start**: Declare the buckets a deployment needs (`VAULTS3_DEFAULT_BUCKETS=app-data,backups`, `storage.default_buckets`, or the chart's `defaultBuckets`) and the missing ones are created while the server starts, so a container needs no init container or one-off S3 client call to become usable. Existing buckets are never touched, and an invalid name or a failed create stops startup instead of coming up quietly incomplete
 - **Graceful shutdown**: Drains in-flight requests on SIGTERM/SIGINT with configurable timeout
@@ -512,10 +513,31 @@ The built-in dashboard is available at `http://localhost:9000/dashboard/`. Login
 - Migrate, import buckets from any S3-compatible source with live progress and a Cancel button for in-flight jobs
 - Version indicator, the running version is shown at the bottom of the sidebar, with an "update available" hint linking to releases
 - Dark/light theme, toggle with system preference detection
+- Language, English, German, French, Simplified Chinese, detected from the browser and switchable in the top bar
 - Responsive layout, mobile-friendly with collapsible sidebar
 - JWT-based authentication (24h tokens)
 
 The dashboard is embedded into the binary, no separate web server needed.
+
+#### Language
+
+The dashboard picks a language from the browser on first load and falls back to
+English. Change it with the selector in the top bar; the choice is stored per
+browser, so different people using the same server can each read it in their own
+language. There is no server-side setting.
+
+Shipping today: **English, Deutsch, Francais, and simplified Chinese**. The
+non-English files were drafted without a native-speaker review, so corrections
+are welcome.
+
+**Adding a language takes one JSON file and no code**: copy
+`web/src/i18n/locales/en.json`, translate the values, and add one entry to
+`LOCALES` in `web/src/i18n/index.tsx`. Any key you leave out falls back to
+English, so a partial translation is fine to send. See
+[Translating the dashboard](CONTRIBUTING.md#translating-the-dashboard) for the
+full steps and the test that checks a locale file.
+
+Server-side output (S3 API error codes, log lines) is English only.
 
 #### Screenshots
 

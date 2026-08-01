@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useI18n } from '../i18n'
 import { listBackups, getBackupStatus, triggerBackup, type BackupRecord, type BackupStatus } from '../api/backup'
 import { useToast } from '../hooks/useToast'
 
@@ -40,6 +41,7 @@ function StatusCard({ label, value, color }: { label: string; value: string; col
 }
 
 export default function BackupPage() {
+  const { t } = useI18n()
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [status, setStatus] = useState<BackupStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,10 +72,10 @@ export default function BackupPage() {
     setTriggering(true)
     try {
       await triggerBackup()
-      addToast('success', 'Backup triggered')
+      addToast('success', t('backup.triggered'))
       fetchData()
     } catch (err) {
-      addToast('error', err instanceof Error ? err.message : 'Trigger failed')
+      addToast('error', err instanceof Error ? err.message : t('backup.triggerFailed'))
     } finally {
       setTriggering(false)
     }
@@ -122,18 +124,18 @@ export default function BackupPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Backups</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Backup history and management</p>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('backup.backups')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('backup.backupHistoryAndManagement')}</p>
         </div>
         <button onClick={handleTrigger} disabled={triggering}
           className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium transition-colors">
-          {triggering ? 'Starting...' : 'Trigger Backup'}
+          {triggering ? t('backup.starting') : t('backup.triggerBackup')}
         </button>
       </div>
 
       {status && !status.enabled && (
         <div className="mb-6 p-5 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
-          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">Backups Not Enabled</h3>
+          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300 mb-2">{t('backup.backupsNotEnabled')}</h3>
           <p className="text-sm text-indigo-700 dark:text-indigo-400 mb-3">
             Schedule automatic full or incremental backups to local directories.
             Enable them in your <code className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 font-mono text-xs">vaults3.yaml</code> config:
@@ -152,17 +154,17 @@ export default function BackupPage() {
       {/* Status cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <StatusCard
-          label="Status"
-          value={status?.enabled ? 'Enabled' : 'Disabled'}
+          label={t('backup.status')}
+          value={status?.enabled ? t('common.enabled') : t('common.disabled')}
           color={status?.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}
         />
         <StatusCard
-          label="Running"
+          label={t('backup.running')}
           value={status?.running ? 'Yes' : 'No'}
           color={status?.running ? 'text-amber-600 dark:text-amber-400' : undefined}
         />
         <StatusCard
-          label="Targets"
+          label={t('backup.targets')}
           value={String(status?.targets ?? 0)}
         />
       </div>
@@ -173,14 +175,14 @@ export default function BackupPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">ID</th>
-                <SortHeader field="type" label="Type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader field="target" label="Target" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader field="startTime" label="Started" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ended</th>
-                <SortHeader field="objects" label="Objects" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader field="size" label="Size" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader field="status" label="Status" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('backup.id')}</th>
+                <SortHeader field="type" label={t('backup.type')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader field="target" label={t('backup.target')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader field="startTime" label={t('backup.started')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('backup.ended')}</th>
+                <SortHeader field="objects" label={t('backup.objects')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader field="size" label={t('backup.size')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader field="status" label={t('backup.status')} sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50">
@@ -205,7 +207,7 @@ export default function BackupPage() {
                 </tr>
               ))}
               {backups.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No backups yet</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">{t('backup.noBackupsYet')}</td></tr>
               )}
             </tbody>
           </table>

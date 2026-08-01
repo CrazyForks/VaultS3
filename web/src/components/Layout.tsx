@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../i18n'
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
@@ -6,6 +7,7 @@ import UpdateBanner from './UpdateBanner'
 import { useKeyboardShortcuts, shortcuts } from '../hooks/useKeyboardShortcuts'
 
 export default function Layout() {
+  const { t } = useI18n()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const { showHelp, setShowHelp } = useKeyboardShortcuts()
@@ -40,7 +42,7 @@ export default function Layout() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowHelp(false)}>
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-6 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Keyboard Shortcuts</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('layout.keyboardShortcuts')}</h3>
               <button
                 onClick={() => setShowHelp(false)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
