@@ -80,7 +80,7 @@ func TestNoPhantomHeadOrGetWhenMetadataGone(t *testing.T) {
 func TestDeleteInvokesReplicaReaper(t *testing.T) {
 	handler, store, _, ts := newObjTestServer(t)
 	reaped := make(chan [2]string, 1)
-	handler.SetReplicaReaper(func(b, k string) { reaped <- [2]string{b, k} })
+	handler.SetReplicaReaper(func(b, k, _ string) { reaped <- [2]string{b, k} })
 
 	bucket, key := "b", "dir/obj.bin"
 	if err := store.CreateBucket(bucket); err != nil {

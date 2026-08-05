@@ -66,7 +66,16 @@ type APIHandler struct {
 	writable         *atomic.Bool                            // node-local write gate (drain); nil ⇒ always writable
 	triggerRebalance func()                                  // kick a background rebalance pass (nil if single-node)
 	rebalanceRunning func() bool                             // whether a rebalance is in progress
+	// localStore is the node-local metadata store, which differs from store only
+	// in a cluster (store is then Raft-backed). In-progress multipart state is kept
+	// node-local (issue #32), so anything asking "does this upload exist here?"
+	// must ask this one. Nil ⇒ same as store.
+	localStore metadata.StoreAPI
 }
+
+// SetLocalStore wires the node-local metadata store, used for state that is
+// deliberately not replicated (in-progress multipart uploads). No-op single-node.
+func (h *APIHandler) SetLocalStore(local metadata.StoreAPI) { h.localStore = local }
 
 // ReplicationFunc is called after a dashboard-initiated object mutation so the
 // write is replicated to peers, mirroring the S3 API path. Without this, objects
@@ -438,6 +447,8 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleMigrateCancel(w, r)
 	case path == "/compact" && r.Method == http.MethodPost:
 		h.handleCompact(w, r)
+	case path == "/reclaim" && r.Method == http.MethodPost:
+		h.handleReclaim(w, r)
 
 	// Observability: real-time event streaming (SSE)
 	case path == "/events" && r.Method == http.MethodGet:

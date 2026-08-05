@@ -101,6 +101,30 @@ for the redundancy trade-offs.
 | `cluster.enabled` | `false` | Auto-form a Raft cluster across the replicas (Beta). |
 | `cluster.raftPort` | `9001` | Port for inter-node Raft traffic. |
 
+**If a clustered install predates 4.4.49, reclaim its leaked space once after
+upgrading.** Until then the multi-object delete (what Spark/Hadoop S3A uses)
+removed metadata cluster-wide but freed the data file only on the pod serving the
+request, stranding `(N-1)/N` of every bulk-deleted byte with no way to reach it
+again. `/data` therefore grows well past the logical size and no S3 call shrinks it.
+
+The container image carries the server only, so drive this from outside the
+cluster with the `vaults3-cli` release binary (or call the API directly):
+
+```bash
+kubectl port-forward -n vaults3 svc/vaults3 9000:9000 &
+export VAULTS3_ENDPOINT=http://localhost:9000
+export VAULTS3_ACCESS_KEY=vaults3-admin VAULTS3_SECRET_KEY=<your secret>
+
+vaults3-cli storage reclaim               # dry run: what would be freed, per pod
+vaults3-cli storage reclaim --apply --yes # actually free it
+```
+
+One pod coordinates and scans all of them, so port-forwarding to any single pod
+is enough. It only touches files that no metadata refers to, and never anything
+written in the last 24 hours. Run the dry run first and read the per-node
+breakdown; unreachable pods are called out, since their orphans are then missing
+from the totals.
+
 ## Backups & restore
 
 VaultS3 keeps object **data** on `/data` (plain files) and **metadata** in a

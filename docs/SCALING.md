@@ -384,6 +384,24 @@ cluster:
   `abort_incomplete_multipart_days`). Per-directory numbers in the same response (and
   in `vaults3-cli info`) tell object data apart from metadata and Raft logs.
 
+  If the ratio stays high after expiring those, look for **orphaned data**: files on
+  disk that no metadata refers to any more. They are not listed, not readable, and no
+  S3 call can delete them, so they never show up as objects. Clusters that ran
+  **before 4.4.49** accumulate them, because the multi-object delete removed metadata
+  cluster-wide while freeing the data file only on the node serving the request,
+  stranding (N-1)/N of every bulk-deleted byte (issue #47). Find and free them:
+
+  ```bash
+  vaults3-cli storage reclaim                 # dry run: what would be freed, per node
+  vaults3-cli storage reclaim --apply         # actually free it
+  ```
+
+  It scans every node, only considers files with no metadata at all, and never
+  touches anything written in the last `--min-age` (default 24h), since a `PUT`
+  lands its data before its metadata commits. Run the dry run first and check the
+  per-node breakdown; if a node is unreachable the output says so, because its
+  orphans are then missing from the totals.
+
   The walk behind `vaultBytes` is cached; `storage.usage_scan_interval_secs` sets how
   often it may repeat (default 300, `0` disables it and leaves `vaultBytes` at zero).
 - **Metrics (Prometheus):** `GET /metrics`, watch for replication lag, heal activity, and
@@ -649,6 +667,7 @@ Practical guidance for huge flat prefixes (tens of millions of keys):
 | Both | `erasure` + `cluster` | EC per node + cluster across nodes |
 | Geo / DR | `replication` | `mode`, `peers[]` |
 | Point-in-time copies | `backup` | `targets[]`, `schedule_cron`, `incremental` |
+| Reclaim orphaned data | (no config) | `vaults3-cli storage reclaim [--apply]` |
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -658,3 +677,4 @@ Practical guidance for huge flat prefixes (tens of millions of keys):
 | `GET /health` | Node liveness |
 | `GET /metrics` | Prometheus metrics |
 | `POST /api/v1/heal` | Trigger on-demand erasure heal (`?bucket=&prefix=`) |
+| `POST /api/v1/reclaim` | Find data no metadata refers to; `?apply=true` frees it (`?min_age_hours=`, `?bucket=`, `?scope=local`) |

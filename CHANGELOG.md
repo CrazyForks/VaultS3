@@ -6,6 +6,66 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.49] - 2026-08-05
+### Fixed
+- **Deleted data is now actually freed on every node**, closing a leak that grew a
+  cluster's disk use without bound under delete-heavy workloads (issue #47,
+  reported by kesavkolla). The multi-object delete (`POST /{bucket}?delete`, what
+  Hadoop/Spark S3A uses by default) is a *bucket*-level request, so a cluster
+  routed it by `hash(bucket, "")` to a single node. That node removed the metadata
+  cluster-wide through Raft but deleted the data file only from its own disk, so
+  every key whose data lived elsewhere was orphaned: not listed, not readable, not
+  deletable by any S3 call. On an N-node cluster this stranded **(N-1)/N of every
+  bulk-deleted byte** (67% on 3 nodes, 92% on 12).
+  - Measured on a 3-node cluster: deleting all 40 test objects previously left 14
+    orphan files behind; it now leaves **zero on every node**.
+  - The same omission is fixed in the lifecycle expiry sweep (whichever node swept
+    first hid the object from the others, stranding their copies), in
+    specific-version deletes, and in suspended-versioning null-version deletes.
+    The reaper is now version-aware.
+  - The multi-object delete reaps with a single request per peer carrying the whole
+    key list, so a 1000-key batch costs one call per node rather than one per node
+    per key.
+- **Multipart uploads are no longer invisible or unabortable in a cluster** (issue
+  #47). In-progress multipart state is deliberately node-local (issue #32) while
+  these requests route by object key, which broke two things:
+  - `ListMultipartUploads` is bucket-level, so it only ever showed the uploads
+    whose key hashed to the listing node, roughly **1/N of them**. The rest could
+    not be listed, inspected, aborted, or cleaned by a lifecycle rule, and their
+    parts sat on disk forever. The listing now merges every node's uploads. On a
+    3-node cluster: **3 of 12 listed before, 12 of 12 after**.
+  - After any hash-ring change (adding or removing a node) an upload stayed on its
+    creating node while `AbortMultipartUpload` and `ListParts` routed to the key's
+    new owner, which answered `NoSuchUpload` forever. Such an upload was a
+    permanent phantom: listed, but impossible to remove. Requests naming an upload
+    this node does not hold are now forwarded to the node that does. Reproduced by
+    adding a 4th node mid-upload: **1 permanent phantom before, 0 after**, with all
+    parts freed.
+
+### Added
+- `vaults3-cli storage reclaim` and `POST /api/v1/reclaim` find object data on
+  disk that no metadata refers to any more, and with `--apply` delete it. This is
+  how a cluster that ran the older builds gets the already-stranded space back,
+  since no S3 operation can reach those files. It fans out across every node,
+  because a node can only see its own disk.
+  - Dry run is the default. Nothing newer than `--min-age` (default 24h) is ever
+    touched, because a `PUT` writes its data before its metadata commits and a
+    brand new object is briefly indistinguishable from an orphan.
+  - Only files with **no metadata at all** are candidates. A file whose object
+    still exists is left alone even on a node that is not its hash owner, since
+    with `replica_count > 1` those copies are load-bearing.
+  - Small-object packing volumes (`_volumes/`) and erasure-coded shards
+    (`<bucket>/.ec/`) are explicitly out of scope, since neither maps to a
+    plain-object metadata entry.
+  - Unreachable nodes are reported and counted, so a partial scan is never read as
+    a complete one.
+
+### Changed
+- The startup log line for compression said `algorithm=gzip`. Writes have been
+  zstd since 4.4.36; it now reports `algorithm=zstd reads=zstd+gzip`, which is what
+  actually happens (older gzip objects are still read). Same correction in
+  `DOCKERHUB.md`.
+
 ## [4.4.48] - 2026-08-01
 ### Fixed
 - **Uploads no longer hold the whole object in memory**, which is what OOM-killed
@@ -1399,7 +1459,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.48...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.49...HEAD
+[4.4.49]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.48...v4.4.49
 [4.4.48]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...v4.4.48
 [4.4.47]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...v4.4.47
 [4.4.46]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.45...v4.4.46

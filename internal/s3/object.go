@@ -52,7 +52,21 @@ type ObjectHandler struct {
 	// local disk, so replicating the metadata through Raft only added a
 	// read-after-write lag that returned 404 NoSuchUpload for a part uploaded right
 	// after CreateMultipartUpload on a follower (issue #32). Defaults to store.
-	mpStore           metadata.StoreAPI
+	mpStore metadata.StoreAPI
+	// multipartHolder, if set (cluster mode), forwards a request naming an upload
+	// this node has no record of to the node that does. In-progress multipart state
+	// is node-local (issue #32) while these requests route by object key, so any
+	// change to the hash ring strands an upload on its creating node: it is still
+	// listed, but abort and ListParts route elsewhere and answer NoSuchUpload
+	// forever, leaving parts on disk that nothing can reclaim (issue #47 bug B).
+	// Returns true when it handled the request.
+	multipartHolder func(w http.ResponseWriter, r *http.Request, uploadID string) bool
+	// multipartPeers, if set (cluster mode), returns the in-progress uploads the
+	// OTHER nodes hold for a bucket. ListMultipartUploads is a bucket-level request
+	// routed to a single node, so on its own it only ever sees the uploads whose key
+	// happens to hash to that node, roughly 1/N of them; the rest were invisible and
+	// their parts unreclaimable (issue #47 bug B).
+	multipartPeers    func(bucket string) []metadata.MultipartUpload
 	engine            storage.Engine
 	encryptionEnabled bool
 	// reapReplicas, if set (cluster mode), removes an object's data file from every
@@ -60,7 +74,19 @@ type ObjectHandler struct {
 	// change can leave an orphan copy elsewhere; without reaping it lingers on disk
 	// (issue #34 layer 2). Best-effort and asynchronous — correctness already comes
 	// from metadata being authoritative (layer 1), this just reclaims disk.
-	reapReplicas func(bucket, key string)
+	//
+	// EVERY path that removes object data must call this, not just the single-object
+	// DELETE. A bucket-level request like the multi-object delete is routed by
+	// hash(bucket, "") to one node, so its local engine holds only that node's share
+	// of the keys; deleting there while the metadata goes cluster-wide through Raft
+	// orphaned (N-1)/N of the bytes with no way left to reach them (issue #47).
+	// versionID is empty for a plain (non-versioned) object.
+	reapReplicas func(bucket, key, versionID string)
+	// reapReplicasBatch is the multi-key form, used by the multi-object delete. A
+	// Spark-style job deletes keys a thousand at a time, and reaping those one at a
+	// time would be peers*keys separate requests, so this sends one request per peer
+	// carrying the whole key list.
+	reapReplicasBatch func(bucket string, keys []string)
 	// replicatePlacement, if set (cluster mode with replica_count > 1), copies a
 	// just-written object's data to the other nodes in its replica set so a node
 	// loss doesn't make it unavailable (issue #37). Best-effort + asynchronous —
@@ -106,6 +132,21 @@ func (h *ObjectHandler) serveFromDataHolder(w http.ResponseWriter, r *http.Reque
 		return true
 	}
 	return false
+}
+
+// reapElsewhere removes this object's data file from every OTHER node after the
+// local engine deleted its own copy. In a cluster the node serving a delete holds
+// the data only when it happens to be the key's hash owner: a bucket-level request
+// (the multi-object delete) is routed by hash(bucket, "") and a background sweep
+// runs wherever it runs, so without this the bytes on the (N-1) other nodes are
+// orphaned the instant the Raft-replicated metadata goes away, and nothing can
+// reach them again (issue #47). Best-effort and asynchronous, exactly like the
+// original single-object reaper (issue #34 layer 2): correctness comes from
+// metadata being authoritative, this only reclaims disk. No-op single-node.
+func (h *ObjectHandler) reapElsewhere(bucket, key, versionID string) {
+	if h.reapReplicas != nil {
+		h.reapReplicas(bucket, key, versionID)
+	}
 }
 
 // multipartStore returns the store used for in-progress multipart upload
@@ -886,6 +927,7 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 
 		h.engine.DeleteObjectVersion(bucket, key, versionID)
 		h.store.DeleteObjectVersion(bucket, key, versionID)
+		h.reapElsewhere(bucket, key, versionID)
 
 		// If we deleted the latest, find the new latest
 		versions, _, _ := h.store.ListObjectVersions(bucket, key, "", "", 1)
@@ -959,6 +1001,7 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 		// Remove existing null version if any
 		h.engine.DeleteObjectVersion(bucket, key, "null")
 		h.store.DeleteObjectVersion(bucket, key, "null")
+		h.reapElsewhere(bucket, key, "null")
 
 		dm := metadata.ObjectMeta{
 			Bucket:       bucket,
@@ -1006,11 +1049,7 @@ func (h *ObjectHandler) DeleteObject(w http.ResponseWriter, r *http.Request, buc
 	}
 
 	h.store.DeleteObjectMeta(bucket, key)
-	// Reap any orphan copy left on another node by a past ring/primary change so
-	// deleted data doesn't linger on disk (issue #34 layer 2). Async/best-effort.
-	if h.reapReplicas != nil {
-		h.reapReplicas(bucket, key)
-	}
+	h.reapElsewhere(bucket, key, "")
 	w.WriteHeader(http.StatusNoContent)
 	if h.onNotification != nil {
 		h.onNotification("s3:ObjectRemoved:Delete", bucket, key, 0, "", "")
@@ -1349,6 +1388,12 @@ func (h *ObjectHandler) BatchDelete(w http.ResponseWriter, r *http.Request, buck
 	versioning, _ := h.store.GetBucketVersioning(bucket)
 
 	var result deleteResult
+	// Keys whose data must also be dropped on the other nodes. This request was
+	// routed by hash(bucket, "") to a single node, so the engine delete below only
+	// frees the keys that happen to live here; the rest sit on the other nodes and
+	// become unreachable orphans the moment the Raft-replicated metadata is gone.
+	// That is how a delete-heavy workload grew to ~9x its logical size (issue #47).
+	var reaped []string
 	for _, obj := range req.Objects {
 		// Validate key against path traversal
 		invalid := false
@@ -1390,6 +1435,7 @@ func (h *ObjectHandler) BatchDelete(w http.ResponseWriter, r *http.Request, buck
 			})
 		} else {
 			h.store.DeleteObjectMeta(bucket, obj.Key)
+			reaped = append(reaped, obj.Key)
 			if !req.Quiet {
 				result.Deleted = append(result.Deleted, deletedObject{Key: obj.Key})
 			}
@@ -1404,6 +1450,16 @@ func (h *ObjectHandler) BatchDelete(w http.ResponseWriter, r *http.Request, buck
 			}
 			if h.onSearchUpdate != nil {
 				h.onSearchUpdate("delete", bucket, obj.Key)
+			}
+		}
+	}
+
+	if len(reaped) > 0 {
+		if h.reapReplicasBatch != nil {
+			h.reapReplicasBatch(bucket, reaped)
+		} else if h.reapReplicas != nil {
+			for _, k := range reaped {
+				h.reapReplicas(bucket, k, "")
 			}
 		}
 	}

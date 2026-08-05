@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -119,6 +122,10 @@ type Server struct {
 	ecHealer        *erasure.Healer
 	s3Auth          *s3.Authenticator
 	writable        *atomic.Bool // node-local write gate shared by the S3 + admin handlers (drain)
+	// reapElsewhere drops an object's data on the OTHER nodes; nil single-node.
+	// Held here so background sweeps (lifecycle expiry) reclaim cluster-wide too,
+	// not just the request-path deletes (issue #47).
+	reapElsewhere func(bucket, key, versionID string)
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -134,7 +141,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// Wrap with compression if enabled (compress before encrypt)
 	if cfg.Compression.Enabled {
 		engine = storage.NewCompressedEngine(engine)
-		slog.Info("compression enabled", "algorithm", "gzip")
+		// Writes are zstd; gzip is still decoded on read for objects written by
+		// older versions. The log said "gzip" long after that stopped being true.
+		slog.Info("compression enabled", "algorithm", "zstd", "reads", "zstd+gzip")
 	}
 
 	// Wrap with encryption if enabled (SSE-S3 or SSE-KMS)
@@ -407,7 +416,11 @@ func New(cfg *config.Config) (*Server, error) {
 	// Cluster delete-reaper: after a delete, remove the object's data file from
 	// every other node so an orphan copy left by a past ring/primary change doesn't
 	// linger on disk (issue #34 layer 2). Best-effort + async — correctness already
-	// comes from metadata being authoritative, this only reclaims disk.
+	// comes from metadata being authoritative, this only reclaims disk. Every path
+	// that removes object data must go through it, request-path or background sweep,
+	// or the copies on the other nodes are stranded with no way to reach them
+	// (issue #47).
+	var reapOne func(bucket, key, versionID string)
 	if clusterProxy != nil {
 		reapSecret := cfg.Cluster.Secret
 		reapSelf := cfg.Cluster.NodeID
@@ -415,25 +428,70 @@ func New(cfg *config.Config) (*Server, error) {
 		if cfg.Server.TLS.Enabled {
 			reapScheme = "https"
 		}
-		s3h.SetReplicaReaper(func(bucket, key string) {
+		reapPost := func(u string, body []byte) {
+			go func() {
+				var rdr io.Reader
+				if body != nil {
+					rdr = bytes.NewReader(body)
+				}
+				req, err := http.NewRequest(http.MethodPost, u, rdr)
+				if err != nil {
+					return
+				}
+				if body != nil {
+					req.Header.Set("Content-Type", "application/json")
+				}
+				if reapSecret != "" {
+					req.Header.Set("X-Cluster-Secret", reapSecret)
+				}
+				if resp, err := reapClient.Do(req); err == nil {
+					resp.Body.Close()
+				}
+			}()
+		}
+		reapOne = func(bucket, key, versionID string) {
 			for id, addr := range clusterProxy.NodeAddrs() {
 				if id == reapSelf || addr == "" {
 					continue
 				}
 				u := reapScheme + "://" + addr + "/cluster/object-delete?bucket=" +
 					url.QueryEscape(bucket) + "&key=" + url.QueryEscape(key)
-				go func(u string) {
-					req, err := http.NewRequest(http.MethodPost, u, nil)
-					if err != nil {
-						return
-					}
-					if reapSecret != "" {
-						req.Header.Set("X-Cluster-Secret", reapSecret)
-					}
-					if resp, err := reapClient.Do(req); err == nil {
-						resp.Body.Close()
-					}
-				}(u)
+				if versionID != "" {
+					u += "&version=" + url.QueryEscape(versionID)
+				}
+				reapPost(u, nil)
+			}
+		}
+		s3h.SetReplicaReaper(reapOne)
+		// Multipart state is node-local (issue #32), so no single node knows about
+		// every upload. Without these two hooks a bucket-level listing showed only
+		// the ~1/N of uploads whose key hashed to the listing node, and an upload
+		// stranded on its creating node by a ring change answered NoSuchUpload to
+		// every abort forever (issue #47 bug B).
+		s3h.SetMultipartPeerLister(func(bucket string) []metadata.MultipartUpload {
+			return collectPeerUploads(clusterProxy.NodeAddrs(), reapSelf, reapScheme, reapSecret, bucket)
+		})
+		s3h.SetMultipartHolderFallback(func(w http.ResponseWriter, r *http.Request, uploadID string) bool {
+			holder := findUploadHolder(clusterProxy.NodeAddrs(), reapSelf, reapScheme, reapSecret, uploadID)
+			if holder == "" {
+				return false // genuinely nowhere; the caller writes NoSuchUpload
+			}
+			clusterProxy.ForwardRequest(w, r, holder)
+			return true
+		})
+
+		// One request per peer for the whole key list, not one per peer per key: a
+		// Spark-style job deletes a thousand keys at a time (issue #47).
+		s3h.SetReplicaReaperBatch(func(bucket string, keys []string) {
+			body, err := json.Marshal(map[string]any{"bucket": bucket, "keys": keys})
+			if err != nil {
+				return
+			}
+			for id, addr := range clusterProxy.NodeAddrs() {
+				if id == reapSelf || addr == "" {
+					continue
+				}
+				reapPost(reapScheme+"://"+addr+"/cluster/object-delete-batch", body)
 			}
 		})
 
@@ -798,6 +856,7 @@ func New(cfg *config.Config) (*Server, error) {
 		store:           store,
 		metaStore:       metaStore,
 		engine:          engine,
+		reapElsewhere:   reapOne,
 		keyMgr:          keyMgr,
 		s3h:             s3h,
 		metrics:         mc,
@@ -868,6 +927,10 @@ func (s *Server) Run() error {
 		// /api/v1/system for the mc-admin-info style view.
 		apiHandler.SetClusterInfo(s.cfg.Cluster.NodeID, s.clusterProxy.NodeAddrs, s.cfg.Cluster.Secret)
 	}
+	// In-progress multipart state is node-local (issue #32), so the orphan reclaim
+	// must ask the local store whether an upload still exists rather than the
+	// Raft-backed one, which never sees it.
+	apiHandler.SetLocalStore(s.store)
 	// Cluster membership + rebalance operations for the admin API / vaults3-cli.
 	if s.clusterNode != nil {
 		apiHandler.SetClusterController(
@@ -1047,9 +1110,13 @@ func (s *Server) Run() error {
 		mux.HandleFunc("/cluster/ownership", ownershipHandler)
 		mux.HandleFunc("/cluster/ownership/", ownershipHandler)
 		mux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/reclaim", apiHandler.ClusterReclaimHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/multipart-list", apiHandler.ClusterMultipartListHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/multipart-find", apiHandler.ClusterMultipartFindHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/readindex", s.clusterNode.ReadIndexHandler())
 		mux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
+		mux.HandleFunc("/cluster/object-delete-batch", apiHandler.ClusterObjectDeleteBatchHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/replica-put", apiHandler.ClusterReplicaPutHandler(s.cfg.Cluster.Secret))
 		mux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		mux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())
@@ -1125,6 +1192,10 @@ func (s *Server) Run() error {
 	lcCtx, lcCancel := context.WithCancel(context.Background())
 	defer lcCancel()
 	lcWorker := lifecycle.NewWorker(s.store, s.engine, s.cfg.Lifecycle.ScanIntervalSecs, s.cfg.Security.AuditRetentionDays)
+	// Expiry removes the metadata through Raft, so the first node to sweep hides the
+	// object from every other node's next sweep; without reaping, their copies of the
+	// data are stranded forever (issue #47).
+	lcWorker.SetReaper(s.reapElsewhere)
 	go lcWorker.Run(lcCtx)
 	slog.Info("lifecycle worker started", "interval_secs", s.cfg.Lifecycle.ScanIntervalSecs)
 
@@ -1234,9 +1305,13 @@ func (s *Server) Run() error {
 		interNodeMux := http.NewServeMux()
 		interNodeMux.HandleFunc("/cluster/status", s.clusterNode.StatusHandler())
 		interNodeMux.HandleFunc("/cluster/sysinfo", apiHandler.ClusterSysInfoHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/reclaim", apiHandler.ClusterReclaimHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/multipart-list", apiHandler.ClusterMultipartListHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/multipart-find", apiHandler.ClusterMultipartFindHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/readindex", s.clusterNode.ReadIndexHandler())
 		interNodeMux.HandleFunc("/cluster/drain", apiHandler.ClusterDrainHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/object-delete", apiHandler.ClusterObjectDeleteHandler(s.cfg.Cluster.Secret))
+		interNodeMux.HandleFunc("/cluster/object-delete-batch", apiHandler.ClusterObjectDeleteBatchHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/replica-put", apiHandler.ClusterReplicaPutHandler(s.cfg.Cluster.Secret))
 		interNodeMux.HandleFunc("/cluster/join", s.clusterNode.JoinHandler())
 		interNodeMux.HandleFunc("/cluster/leave", s.clusterNode.LeaveHandler())

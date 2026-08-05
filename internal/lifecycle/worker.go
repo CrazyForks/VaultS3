@@ -18,6 +18,22 @@ type Worker struct {
 	engine             storage.Engine
 	interval           time.Duration
 	auditRetentionDays int
+	// reap, if set (cluster mode), removes an expired object's data file from the
+	// OTHER nodes. Expiry deletes the metadata through Raft, so the first node to
+	// sweep hides the object from every other node's next sweep and their copies of
+	// the data are stranded forever. Same leak as the multi-object delete had
+	// (issue #47). Best-effort; correctness comes from metadata being authoritative.
+	reap func(bucket, key, versionID string)
+}
+
+// SetReaper wires the cluster hook that drops an expired object's data on the
+// other nodes. No-op single-node.
+func (w *Worker) SetReaper(fn func(bucket, key, versionID string)) { w.reap = fn }
+
+func (w *Worker) reapElsewhere(bucket, key, versionID string) {
+	if w.reap != nil {
+		w.reap(bucket, key, versionID)
+	}
 }
 
 func NewWorker(store *metadata.Store, engine storage.Engine, intervalSecs, auditRetentionDays int) *Worker {
@@ -125,6 +141,7 @@ func (w *Worker) scan() {
 						continue
 					}
 					w.store.DeleteObjectMeta(meta.Bucket, meta.Key)
+					w.reapElsewhere(meta.Bucket, meta.Key, "")
 					expired++
 					break
 				}
@@ -184,6 +201,7 @@ func (w *Worker) scan() {
 						if v.LastModified < cutoff {
 							w.engine.DeleteObjectVersion(v.Bucket, v.Key, v.VersionID)
 							w.store.DeleteObjectVersion(v.Bucket, v.Key, v.VersionID)
+							w.reapElsewhere(v.Bucket, v.Key, v.VersionID)
 							noncurrentExpired++
 						}
 					}
@@ -195,6 +213,7 @@ func (w *Worker) scan() {
 					for _, v := range excess {
 						w.engine.DeleteObjectVersion(v.Bucket, v.Key, v.VersionID)
 						w.store.DeleteObjectVersion(v.Bucket, v.Key, v.VersionID)
+						w.reapElsewhere(v.Bucket, v.Key, v.VersionID)
 						noncurrentExpired++
 					}
 				}

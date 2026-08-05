@@ -2,7 +2,9 @@ package api
 
 import (
 	"crypto/hmac"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 )
@@ -200,8 +202,9 @@ func (h *APIHandler) ClusterDrainHandler(secret string) http.HandlerFunc {
 // ClusterObjectDeleteHandler removes a single object's data file from THIS node's
 // local engine only (no metadata, no proxy). The delete coordinator broadcasts it
 // to every node to reap replica/orphan copies left after a delete, so deleted
-// data doesn't linger on disk (issue #34 layer 2). Cluster-secret authed;
-// best-effort — a missing file is not an error.
+// data doesn't linger on disk (issue #34 layer 2, every delete path since #47).
+// A `version` param targets one version instead of the plain object. Cluster-secret
+// authed; best-effort — a missing file is not an error.
 func (h *APIHandler) ClusterObjectDeleteHandler(secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if secret != "" && !hmac.Equal([]byte(r.Header.Get(clusterSecretHeader)), []byte(secret)) {
@@ -211,7 +214,51 @@ func (h *APIHandler) ClusterObjectDeleteHandler(secret string) http.HandlerFunc 
 		bucket := r.URL.Query().Get("bucket")
 		key := r.URL.Query().Get("key")
 		if bucket != "" && key != "" && h.engine != nil {
-			_ = h.engine.DeleteObject(bucket, key) // best-effort; missing file is fine
+			// best-effort throughout; a missing file is the expected case on the
+			// nodes that never held this object
+			if version := r.URL.Query().Get("version"); version != "" {
+				_ = h.engine.DeleteObjectVersion(bucket, key, version)
+			} else {
+				_ = h.engine.DeleteObject(bucket, key)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// ClusterObjectDeleteBatchHandler is the multi-key form of
+// ClusterObjectDeleteHandler: it removes many objects' data files from THIS node's
+// local engine in one request. The multi-object delete broadcasts here so a
+// thousand-key batch costs one request per peer rather than one per peer per key
+// (issue #47). Body is a JSON {"bucket": "...", "keys": [...]}. Cluster-secret
+// authed; best-effort — missing files are the expected case on nodes that never
+// held these objects.
+func (h *APIHandler) ClusterObjectDeleteBatchHandler(secret string) http.HandlerFunc {
+	// Bounded so a malformed or hostile body cannot make a node allocate without
+	// limit; a well-behaved batch is at most 1000 keys (the S3 cap).
+	const maxBatchBody = 4 << 20
+	return func(w http.ResponseWriter, r *http.Request) {
+		if secret != "" && !hmac.Equal([]byte(r.Header.Get(clusterSecretHeader)), []byte(secret)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			Bucket string   `json:"bucket"`
+			Keys   []string `json:"keys"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxBatchBody)).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Bucket == "" || h.engine == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, key := range req.Keys {
+			if key == "" {
+				continue
+			}
+			_ = h.engine.DeleteObject(req.Bucket, key)
 		}
 		w.WriteHeader(http.StatusOK)
 	}

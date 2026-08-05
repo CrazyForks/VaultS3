@@ -111,9 +111,34 @@ func (h *Handler) SetLocalMultipartStore(local metadata.StoreAPI) {
 }
 
 // SetReplicaReaper wires the cluster hook that removes a deleted object's data
-// file from other nodes (issue #34 layer 2). No-op single-node.
-func (h *Handler) SetReplicaReaper(fn func(bucket, key string)) {
+// file from other nodes (issue #34 layer 2, extended to every delete path by
+// issue #47). versionID is empty for a plain object. No-op single-node.
+func (h *Handler) SetReplicaReaper(fn func(bucket, key, versionID string)) {
 	h.objects.reapReplicas = fn
+}
+
+// SetReplicaReaperBatch wires the multi-key form of the reaper, used by the
+// multi-object delete so a thousand-key batch costs one request per peer instead
+// of one per peer per key (issue #47). Falls back to the single-key reaper when
+// unset. No-op single-node.
+func (h *Handler) SetReplicaReaperBatch(fn func(bucket string, keys []string)) {
+	h.objects.reapReplicasBatch = fn
+}
+
+// SetMultipartHolderFallback wires the cluster hook that forwards a request for
+// an upload this node does not have to the node that does, so an upload stranded
+// by a ring change stays abortable instead of becoming a permanent phantom
+// (issue #47 bug B). No-op single-node.
+func (h *Handler) SetMultipartHolderFallback(fn func(w http.ResponseWriter, r *http.Request, uploadID string) bool) {
+	h.objects.multipartHolder = fn
+}
+
+// SetMultipartPeerLister wires the cluster hook that collects the other nodes'
+// in-progress uploads for a bucket, so ListMultipartUploads reports all of them
+// rather than only the ~1/N whose key hashes to the listing node (issue #47 bug
+// B). No-op single-node.
+func (h *Handler) SetMultipartPeerLister(fn func(bucket string) []metadata.MultipartUpload) {
+	h.objects.multipartPeers = fn
 }
 
 // SetPlacementReplicator wires the cluster hook that copies a just-written

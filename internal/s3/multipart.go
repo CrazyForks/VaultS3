@@ -74,11 +74,30 @@ func (h *ObjectHandler) CreateMultipartUpload(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// requireUpload resolves an upload ID for a request that names one. It returns
+// the record and true when this node holds it and should serve the request
+// locally. It returns false when the caller must stop, either because a peer
+// holding the upload has already answered, or because the upload genuinely does
+// not exist anywhere and a NoSuchUpload has been written.
+//
+// Every multipart handler goes through here so none of them can reintroduce the
+// bug where a node that lacks the record answers NoSuchUpload for an upload that
+// is alive on a different node (issue #47 bug B).
+func (h *ObjectHandler) requireUpload(w http.ResponseWriter, r *http.Request, uploadID string) (*metadata.MultipartUpload, bool) {
+	upload, err := h.multipartStore().GetMultipartUpload(uploadID)
+	if err == nil {
+		return upload, true
+	}
+	if h.multipartHolder != nil && h.multipartHolder(w, r, uploadID) {
+		return nil, false
+	}
+	writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	return nil, false
+}
+
 // UploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=X.
 func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.multipartStore().GetMultipartUpload(uploadID)
-	if err != nil {
-		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	if _, ok := h.requireUpload(w, r, uploadID); !ok {
 		return
 	}
 
@@ -129,9 +148,8 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucke
 
 // CompleteMultipartUpload handles POST /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	upload, err := h.multipartStore().GetMultipartUpload(uploadID)
-	if err != nil {
-		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	upload, ok := h.requireUpload(w, r, uploadID)
+	if !ok {
 		return
 	}
 
@@ -298,9 +316,7 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 
 // AbortMultipartUpload handles DELETE /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.multipartStore().GetMultipartUpload(uploadID)
-	if err != nil {
-		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	if _, ok := h.requireUpload(w, r, uploadID); !ok {
 		return
 	}
 
@@ -320,9 +336,7 @@ func (h *ObjectHandler) multipartDir(uploadID string) string {
 
 // UploadPartCopy handles PUT /{bucket}/{key}?partNumber=N&uploadId=X with X-Amz-Copy-Source.
 func (h *ObjectHandler) UploadPartCopy(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.multipartStore().GetMultipartUpload(uploadID)
-	if err != nil {
-		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	if _, ok := h.requireUpload(w, r, uploadID); !ok {
 		return
 	}
 
@@ -451,6 +465,31 @@ func (h *ObjectHandler) ListMultipartUploads(w http.ResponseWriter, r *http.Requ
 		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
 		return
 	}
+	// This request is bucket-level, so a cluster routes it to one node by
+	// hash(bucket, ""), but uploads are stored on the node that owns each object
+	// KEY. Listing only what is local therefore showed roughly 1/N of the uploads
+	// and hid the rest completely: no ListParts, no abort, and no lifecycle rule
+	// could reach them, so their parts sat on disk forever (issue #47 bug B).
+	if h.multipartPeers != nil {
+		seen := make(map[string]bool, len(uploads))
+		for _, u := range uploads {
+			seen[u.UploadID] = true
+		}
+		for _, u := range h.multipartPeers(bucket) {
+			if !seen[u.UploadID] {
+				seen[u.UploadID] = true
+				uploads = append(uploads, u)
+			}
+		}
+	}
+	// A stable order across nodes: the merge order depends on map iteration and
+	// peer response timing, which would otherwise reshuffle the listing every call.
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
 
 	type xmlUpload struct {
 		Key       string `xml:"Key"`
@@ -479,9 +518,7 @@ func (h *ObjectHandler) ListMultipartUploads(w http.ResponseWriter, r *http.Requ
 
 // ListParts handles GET /{bucket}/{key}?uploadId=X.
 func (h *ObjectHandler) ListParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	_, err := h.multipartStore().GetMultipartUpload(uploadID)
-	if err != nil {
-		writeS3Error(w, "NoSuchUpload", "Upload not found", http.StatusNotFound)
+	if _, ok := h.requireUpload(w, r, uploadID); !ok {
 		return
 	}
 
