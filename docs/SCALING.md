@@ -418,6 +418,8 @@ cluster:
   | `proxy: every candidate node failed` | No holder could serve the request, so the client got `503 SlowDown`. Always worth investigating. |
   | `object data temporarily unavailable: holder unreachable` | The object exists but the node holding its bytes is unreachable; the client was told to retry. |
   | `object metadata/data desync` | The object is listed but its data is missing on **every** holder. This one is a real inconsistency: reconcile with `vaults3-cli object verify --repair`. |
+  | `multipart: a part listed by this upload has no data on disk` | `CompleteMultipartUpload` was asked for a part whose file is gone, so that upload can never complete and the client sees `InvalidPart`. Before 4.4.50 a failed retry of an already-good part caused this; if it appears on 4.4.50 or later the part was lost some other way, and it is worth reporting. |
+  | `multipart: part upload failed mid-transfer` | A part's body did not arrive in full (a dropped connection, a client or proxy timeout). Harmless on its own, since any previously uploaded copy of that part is untouched and the client can retry, but a steady stream of these means the network or the client is struggling. |
 
 ---
 
@@ -610,6 +612,14 @@ backup:
 
   Size per-pod memory for concurrency x part/object size plus headroom. If OOMKills
   persist after 4.4.48, that is worth reporting rather than only raising the limit.
+
+  **Raising the limit can also hide a fault rather than fix one.** Memory pressure
+  makes transfers fail, and until 4.4.50 a part upload that failed partway destroyed
+  a copy of that part that had already succeeded, which stranded the whole upload on
+  `InvalidPart` for good (issue #48). More memory made the failed transfers rarer, so
+  the symptom faded without the cause going anywhere. If more RAM improves an error
+  rate without removing it, treat the remainder as a bug worth reporting, and check
+  the log lines in section 6 for what the server thinks is happening.
 
 ## 10. Known limitations & caveats
 

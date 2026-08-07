@@ -6,6 +6,43 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.50] - 2026-08-07
+### Fixed
+- **Re-uploading a part no longer destroys the copy that already succeeded**,
+  which is what left multipart uploads permanently stuck on
+  `400 InvalidPart "Part N not found"` (issue #48, reported by vikram-a-m).
+  `UploadPart` wrote straight to the part path, so `os.Create` truncated whatever
+  was already there and the copy-error path deleted it outright, while the
+  earlier success's part metadata survived. After that the upload could never
+  complete: `ListParts` still advertised the part with its original ETag,
+  `CompleteMultipartUpload` could not open it, and no number of retries recovered.
+  - Any failed transfer was enough to trigger it, a dropped connection, a read
+    timeout, a cut-short proxy retry or a client cancel, which is why it tracked
+    dropped connections and memory pressure rather than data volume, and why a
+    retrying client or proxy in front (Envoy, DuckDB `httpfs`) made it routine.
+  - Parts are now written to a temp file and renamed into place only once
+    complete, the same way object writes already worked, so a failed attempt
+    leaves any previously uploaded copy of that part exactly as it was and never
+    leaves a short part behind. `UploadPartCopy` takes the same path.
+  - A part write's `Close` error is now checked rather than deferred away, so a
+    failure that only surfaces on flush cannot be reported to the client as a
+    stored part.
+- **A part that cannot be read for a server-side reason no longer reports
+  `InvalidPart`.** Every `os.Open` failure was turned into
+  `400 InvalidPart`, so running out of file descriptors or hitting an I/O error
+  told the client its request was malformed and every SDK correctly refused to
+  retry a condition a retry would have survived. Only a genuinely absent part is
+  `InvalidPart` now; anything else is a `500`.
+- **A missing part is now logged.** This failure was completely silent server
+  side, which is why it could only be diagnosed from client-side evidence. The
+  log names the bucket, key, upload, part and what to do about it.
+- `CompleteMultipartUpload` now deletes the upload record before removing the
+  part files. Stopping between those two steps (an OOM kill, an eviction) used to
+  leave the record advertising parts whose files were already gone, which is the
+  same unrecoverable `InvalidPart` state. The new order fails the other way
+  instead, leaving unreachable part files that `vaults3-cli storage reclaim`
+  cleans up.
+
 ## [4.4.49] - 2026-08-05
 ### Fixed
 - **Deleted data is now actually freed on every node**, closing a leak that grew a
@@ -1459,7 +1496,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.49...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.50...HEAD
+[4.4.50]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.49...v4.4.50
 [4.4.49]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.48...v4.4.49
 [4.4.48]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...v4.4.48
 [4.4.47]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.46...v4.4.47

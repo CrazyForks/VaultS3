@@ -116,25 +116,10 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucke
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPartSize)
 
-	partPath := filepath.Join(h.multipartDir(uploadID), fmt.Sprintf("part-%05d", partNum))
-	f, err := os.Create(partPath)
-	if err != nil {
-		slog.Error("internal error", "error", err)
-		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+	written, etag, ok := h.writePart(w, r.Body, uploadID, partNum)
+	if !ok {
 		return
 	}
-	defer f.Close()
-
-	hash := md5.New()
-	written, err := io.Copy(f, io.TeeReader(r.Body, hash))
-	if err != nil {
-		os.Remove(partPath)
-		slog.Error("internal error", "error", err)
-		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-		return
-	}
-
-	etag := fmt.Sprintf("\"%s\"", hex.EncodeToString(hash.Sum(nil)))
 
 	h.multipartStore().PutPart(uploadID, metadata.PartInfo{
 		PartNumber: partNum,
@@ -144,6 +129,66 @@ func (h *ObjectHandler) UploadPart(w http.ResponseWriter, r *http.Request, bucke
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+// writePart streams one part to disk and returns its size and ETag.
+//
+// The write goes to a temp file that is renamed into place only once it is
+// complete, so re-uploading a part is non-destructive. Writing straight to the
+// part path meant os.Create truncated whatever was already there and the error
+// path deleted it outright, so a RETRY of a part that had already succeeded
+// destroyed the good data while the earlier success's metadata survived. The
+// upload was then permanently un-completable: ListParts still advertised the
+// part, CompleteMultipartUpload could not open it and answered InvalidPart, and
+// no number of retries recovered (issue #48). Any failed transfer was enough to
+// trigger it, which is why it tracked dropped connections and memory pressure
+// rather than data, and a retrying client or proxy made it routine.
+//
+// Returns ok=false when it has already written an error response.
+func (h *ObjectHandler) writePart(w http.ResponseWriter, body io.Reader, uploadID string, partNum int) (int64, string, bool) {
+	dir := h.multipartDir(uploadID)
+	partPath := filepath.Join(dir, fmt.Sprintf("part-%05d", partNum))
+
+	tmp, err := os.CreateTemp(dir, fmt.Sprintf(".part-%05d-*", partNum))
+	if err != nil {
+		slog.Error("multipart: could not create a temp file for a part",
+			"upload", uploadID, "part", partNum, "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return 0, "", false
+	}
+	tmpPath := tmp.Name()
+
+	hash := md5.New()
+	written, err := io.Copy(tmp, io.TeeReader(body, hash))
+	if err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		// Only the temp file goes; any previously uploaded copy of this part is
+		// left exactly as it was.
+		slog.Warn("multipart: part upload failed mid-transfer, any previously uploaded copy of this part is untouched",
+			"upload", uploadID, "part", partNum, "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return 0, "", false
+	}
+	// Close before renaming, and check it: a deferred close would discard a
+	// write error that only surfaces on flush, leaving a short part on disk that
+	// the client believes was stored.
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		slog.Error("multipart: part could not be flushed to disk",
+			"upload", uploadID, "part", partNum, "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return 0, "", false
+	}
+	if err := os.Rename(tmpPath, partPath); err != nil {
+		os.Remove(tmpPath)
+		slog.Error("multipart: part could not be moved into place",
+			"upload", uploadID, "part", partNum, "error", err)
+		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+		return 0, "", false
+	}
+
+	return written, fmt.Sprintf("\"%s\"", hex.EncodeToString(hash.Sum(nil))), true
 }
 
 // CompleteMultipartUpload handles POST /{bucket}/{key}?uploadId=X.
@@ -211,10 +256,19 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 	var partBoundaries []int64
 	missingPart := 0
 
+	var openErr error
 	for _, part := range req.Parts {
 		partPath := filepath.Join(h.multipartDir(uploadID), fmt.Sprintf("part-%05d", part.PartNumber))
 		pf, err := os.Open(partPath)
 		if err != nil {
+			// Only a genuinely absent part is the client's problem. Anything else
+			// (out of file descriptors, an I/O error, a permission problem) is the
+			// server's, and reporting it as InvalidPart told the client its request
+			// was malformed, so every SDK correctly refused to retry a condition
+			// that a retry would have survived (issue #48).
+			if !os.IsNotExist(err) {
+				openErr = err
+			}
 			missingPart = part.PartNumber
 			break
 		}
@@ -237,6 +291,19 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 	outFile.Close()
 	if missingPart != 0 {
 		os.Remove(assemblePath)
+		if openErr != nil {
+			slog.Error("multipart: could not read a part that is present, failing the completion",
+				"bucket", bucket, "key", key, "upload", uploadID,
+				"part", missingPart, "error", openErr)
+			writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+			return
+		}
+		// The part's data really is gone while its metadata still lists it, so the
+		// upload can never complete and the client cannot tell why. Say so in the
+		// log: silence here is what left issue #48 undiagnosable from the server side.
+		slog.Error("multipart: a part listed by this upload has no data on disk, so the upload cannot complete",
+			"bucket", bucket, "key", key, "upload", uploadID, "part", missingPart,
+			"hint", "re-upload the part, or abort the upload and start again")
 		writeS3Error(w, "InvalidPart", fmt.Sprintf("Part %d not found", missingPart), http.StatusBadRequest)
 		return
 	}
@@ -277,9 +344,14 @@ func (h *ObjectHandler) CompleteMultipartUpload(w http.ResponseWriter, r *http.R
 		PartBoundaries: partBoundaries,
 	})
 
-	// Clean up
-	os.RemoveAll(h.multipartDir(uploadID))
+	// Clean up. The record goes FIRST: stopping between the two steps (an OOM
+	// kill, an eviction) used to leave the record advertising parts whose files
+	// were already gone, so every later attempt hit InvalidPart forever. This
+	// order fails the other way instead, leaving part files with no record, which
+	// is both harmless (they are unreachable) and reclaimable with
+	// `vaults3-cli storage reclaim` (issue #47).
 	h.multipartStore().DeleteMultipartUpload(uploadID)
+	os.RemoveAll(h.multipartDir(uploadID))
 
 	type completeResult struct {
 		XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
@@ -408,26 +480,13 @@ func (h *ObjectHandler) UploadPartCopy(w http.ResponseWriter, r *http.Request, b
 		dataReader = io.LimitReader(reader, copySize)
 	}
 
-	// Write to part file
-	partPath := filepath.Join(h.multipartDir(uploadID), fmt.Sprintf("part-%05d", partNum))
-	f, err := os.Create(partPath)
-	if err != nil {
-		slog.Error("internal error", "error", err)
-		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
+	// Write to the part file through the same temp-then-rename path as a normal
+	// part upload, so a failed copy cannot destroy a part that already succeeded
+	// (issue #48).
+	written, etag, ok := h.writePart(w, dataReader, uploadID, partNum)
+	if !ok {
 		return
 	}
-	defer f.Close()
-
-	hash := md5.New()
-	written, err := io.Copy(f, io.TeeReader(dataReader, hash))
-	if err != nil {
-		os.Remove(partPath)
-		slog.Error("internal error", "error", err)
-		writeS3Error(w, "InternalError", "An internal error occurred", http.StatusInternalServerError)
-		return
-	}
-
-	etag := fmt.Sprintf("\"%s\"", hex.EncodeToString(hash.Sum(nil)))
 
 	h.multipartStore().PutPart(uploadID, metadata.PartInfo{
 		PartNumber: partNum,
