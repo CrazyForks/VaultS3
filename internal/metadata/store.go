@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -308,6 +309,21 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("open metadata db: %w", err)
 	}
 
+	s := &Store{db: db}
+
+	// A snapshot restore that did not finish leaves a partial copy of the
+	// cluster's metadata. Serving it would silently present a subset of the
+	// objects as the whole set, so drop it and start clean: the state is derived
+	// from Raft, which installs its snapshot again (issue #46 follow-up). This
+	// runs BEFORE the buckets below are created, so they are recreated empty.
+	if s.restoreWasInterrupted() {
+		slog.Error("metadata: a previous Raft snapshot restore was interrupted, so this node's metadata is incomplete; discarding it and waiting for the cluster to send it again")
+		if err := s.clearInterruptedRestore(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("clear interrupted restore: %w", err)
+		}
+	}
+
 	err = db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists(bucketsBucket); err != nil {
 			return err
@@ -397,7 +413,7 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("init metadata buckets: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return s, nil
 }
 
 func (s *Store) Close() error {

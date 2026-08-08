@@ -6,6 +6,43 @@ semantic-ish versioning via git tags (`vMAJOR.MINOR.PATCH`).
 
 ## [Unreleased]
 
+## [4.4.51] - 2026-08-08
+### Fixed
+- **A node no longer allocates in proportion to the cluster's metadata while it
+  starts up**, which is what OOM-killed pods during their own startup/join phase
+  before they served a single request (issue #46 follow-up, reported by
+  kesavkolla). Installing a Raft snapshot is the first thing a joining or
+  restarting node does, and it ran as one BoltDB write transaction. Bolt holds
+  every dirty page of a transaction in memory until it commits, so peak memory
+  scaled with the total number of objects.
+  - The restore now commits in bounded batches. Measured peak RSS restoring a
+    snapshot: at 400k objects **559 MiB to 60 MiB**, at 1.6M objects **2175 MiB
+    to 66 MiB**. It is now flat in the size of the data rather than linear.
+  - Restoring is deliberately no longer atomic, so an interrupted restore leaves
+    a partial database. That is recorded, detected on the next open, and
+    discarded, after which the cluster sends the snapshot again. Serving a
+    partial restore would have presented a subset of the objects as the whole
+    set.
+
+### Note on the load-time half of issue #46
+The streaming-upload fix released in 4.4.48 is working. Measured on one node with
+a 4 GiB limit, 64 MiB objects at 64 concurrent uploads, sampling cgroup v2
+`memory.stat`:
+
+| build | anon (real memory) | outcome | throughput |
+|---|---|---|---|
+| 4.4.44 | 2253 MiB | OOMKilled (exit 137), every request failed | 65 MiB/s |
+| 4.4.48 | 22 MiB | survived, no errors | 956 MiB/s |
+| 4.4.50 | 20 MiB | survived, no errors | 1021 MiB/s |
+
+If you are watching `memory.current` (or `container_memory_usage_bytes`) it will
+sit near the limit under write load and that is expected: it **includes page
+cache**, which the kernel fills with written object data and reclaims on demand.
+It is also misleading in this case, because the build that OOM-killed showed a
+*lower* `memory.current` (1804 MiB) than the healthy one (4094 MiB) — it died
+before the cache could accumulate. Alert on `anon`, or on working set
+(`memory.current` minus `inactive_file`), not on `memory.current`.
+
 ## [4.4.50] - 2026-08-07
 ### Fixed
 - **Re-uploading a part no longer destroys the copy that already succeeded**,
@@ -1496,7 +1533,8 @@ engines) plus an audit of the high-risk packages. Every fix has a regression tes
   dashboard, CLI, versioning, WORM, notifications, full-text search, FUSE mount,
   and multi-platform release binaries + Docker images.
 
-[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.50...HEAD
+[Unreleased]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.51...HEAD
+[4.4.51]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.50...v4.4.51
 [4.4.50]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.49...v4.4.50
 [4.4.49]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.48...v4.4.49
 [4.4.48]: https://github.com/Kodiqa-Solutions/VaultS3/compare/v4.4.47...v4.4.48

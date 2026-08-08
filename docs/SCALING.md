@@ -613,6 +613,24 @@ backup:
   Size per-pod memory for concurrency x part/object size plus headroom. If OOMKills
   persist after 4.4.48, that is worth reporting rather than only raising the limit.
 
+  **Measure `anon`, not `memory.current`.** In cgroup v2 `memory.current` (and
+  Prometheus `container_memory_usage_bytes`) **includes page cache**. A server
+  writing object data fills it to the limit as a matter of course and the kernel
+  reclaims it on demand, so "sitting at 100%" is normal and is not what gets a pod
+  killed. Alert on `anon` from `memory.stat`, or on working set
+  (`memory.current` minus `inactive_file`). Measured on one node at a 4 GiB limit
+  with 64 MiB objects and 64 concurrent uploads: 4.4.44 held **2253 MiB of anon
+  and was OOM-killed**, while 4.4.50 held **20 MiB** and survived the same
+  workload. The killed build reported the *lower* `memory.current` of the two
+  (1804 MiB against 4094 MiB), because it died before the cache accumulated, so
+  that counter ranked the broken build ahead of the healthy one.
+
+  **Startup memory is flat in the size of the cluster from 4.4.51.** A joining or
+  restarting node installs a Raft snapshot before it serves anything, and that
+  restore used to run as one database transaction, so it allocated in proportion
+  to the total object count and could be OOM-killed during startup (issue #46).
+  Restoring a 1.6M-object snapshot peaked at **2175 MiB before and 66 MiB after**.
+
   **Raising the limit can also hide a fault rather than fix one.** Memory pressure
   makes transfers fail, and until 4.4.50 a part upload that failed partway destroyed
   a copy of that part that had already succeeded, which stranded the whole upload on

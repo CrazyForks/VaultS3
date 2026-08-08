@@ -78,6 +78,22 @@ docker stats --no-stream --format '{{.MemUsage}}' vaults3
 
 Capture RAM **while `warp` is running**, so the number reflects real load.
 
+**In a container, measure `anon`, not `memory.current`.** `docker stats`, cgroup
+v2 `memory.current` and Prometheus `container_memory_usage_bytes` all include
+**page cache**, which a server writing object data fills to the limit as a matter
+of course; the kernel reclaims it under pressure. Use `anon` from
+`/sys/fs/cgroup/memory.stat`:
+
+```bash
+docker exec vaults3 grep -E '^(anon|file) ' /sys/fs/cgroup/memory.stat
+```
+
+The difference is not academic. Measured at a 4 GiB limit with 64 MiB objects at
+64 concurrent uploads, a build that **OOM-killed** reported 1804 MiB of
+`memory.current` while a healthy one reported 4094 MiB — the counter ranked the
+broken build ahead of the working one. Their `anon` figures were 2253 MiB and
+20 MiB respectively, which is the number that decides an OOM kill.
+
 **Object size and concurrency drive the peak, not the object count.** A steady
 workload of small objects sits near the idle figure; large objects at high
 concurrency are what set the ceiling, because each in-flight request holds
